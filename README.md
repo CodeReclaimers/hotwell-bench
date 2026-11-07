@@ -1,9 +1,12 @@
-# hotwell-bench (private)
+# hotwell-bench
 
 Benchmark generation and grading for a 24-hour plant data-dump fault-identification task,
 built on the public [`hotwell`](https://github.com/CodeReclaimers/hotwell) simulator.
-**Keep this repository private.** The test split's secrecy rests on its held-out seeds
-and answer key, which live only here.
+
+**This repository will be public; the test split is not.** The code, plan, and dev split
+can be published. The test split's master seed, generated items and answer key must
+never be committed. Generators take the master seed at run time, and the test-split
+writers refuse any output path inside this repository tree (PLAN-bench-0.1.md §1, §11).
 
 Plan and decisions: `PLAN-bench-0.1.md` (approved 2026-11-07; answers in §11).
 
@@ -20,7 +23,11 @@ uv pip install -e '.[dev]'     # pulls hotwell @ v0.4.0 from GitHub and numpy==2
 non-editable hotwell tag commit and the pinned numpy. Every generation run must call it.
 Never `pip install -e ../hotwell` here.
 
+## License
+
+MIT. See [LICENSE](LICENSE).
+
 ## Status
 
-B0 (skeleton, pins, determinism gates) complete. B1 (item record schema and sampler) is
-next.
+B0 (skeleton, pins, determinism gates) and B1 (item records, sampler, builder) complete.
+B2 (runner: faulted + twin runs, 1 Hz capture, events, shift log) is next.

@@ -5,8 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hotwell-bench"
 version = "0.1.0.dev0"
-description = "24-hour fault-identification benchmark generated from the hotwell plant simulator (private)"
+description = "24-hour fault-identification benchmark generated from the hotwell plant simulator"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Alan McIntyre" }]
 dependencies = [
     # The simulator, pinned to a release tag and never edited from here.
     "hotwell @ git+https://github.com/CodeReclaimers/hotwell@v0.4.0",

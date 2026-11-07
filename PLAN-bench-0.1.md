@@ -28,9 +28,15 @@ separate step (it needs API keys and spend; §9).
   PCG64/SeedSequence or `normal()`. The bench pins numpy exactly, and every released
   item set records `hotwell` commit, numpy version, and per-item state and observation
   hashes.
-- **This repo stays private.** hotwell (simulator, fault catalog, manual) is public;
-  the secrecy of the test split rests on held-out seeds and the answer key, both of
-  which live only here.
+- **The repo will be public (Alan, 2026-11-07, superseding "stays private"); the test
+  split is not.** hotwell (simulator, fault catalog, manual) is public too. The test
+  split's secrecy therefore rests on material that **never enters git**: its master
+  seed, generated items and answer key. Mechanisms:
+  - generators take the master seed as a run-time input, never a committed constant;
+  - test-split writers refuse output paths inside the repository tree (B4);
+  - the dev split may be published.
+
+  Storage for the test seed and keys is decided at B6.
 - Reported numbers come from committed code, and every pipeline stage is gated on an
   audit of its output before the next stage consumes it (§7).
 
@@ -62,8 +68,8 @@ separate step (it needs API keys and spend; §9).
 |---|---|---|
 | `none` | — | no fault |
 | `pump_performance_loss` | CP-1, CP-2, FP-1, FP-2 | `pump_degrade` (head factor) |
-| `valve_capacity_loss` | FRV, LCV, makeup valve | `valve_degrade` (Cv factor) |
-| `actuator_stuck` | FRV, throttle, firing, DA LCV, makeup valve | `actuator_stuck` |
+| `valve_capacity_loss` | FRV, DA LCV, makeup valve | `valve_degrade` (Cv factor) |
+| `stuck_actuator` | FRV, throttle, firing, DA LCV, makeup valve | `actuator_stuck` |
 | `actuator_sluggish` | FRV, throttle, firing | `actuator_slow` |
 | `combustion_efficiency_loss` | — | `firing_degrade` |
 | `condenser_vacuum_degradation` | — | `condenser_fouling` |
@@ -71,6 +77,11 @@ separate step (it needs API keys and spend; §9).
 | `instrument_fault` | any of the 26 instruments | sensor `bias` / `drift` / `stuck` / `lag` / `noise_increase` |
 
 Whether `instrument_fault` asks for the sub-kind (bias vs drift…) is B-Q3.
+
+*B1 deviations (recorded):*
+- `actuator_stuck` is renamed `stuck_actuator`, because the original is a hotwell
+  event name and the B4 leak scan forbids event names in task.md.
+- "LCV" becomes "DA LCV": it is the same valve as the stuck-actuator row.
 
 ## 3. Item generation (B1–B2)
 
@@ -126,6 +137,25 @@ sensed difference is the fault's effect alone. Per item we record:
 
 If t_det does not exist (no exceedance before 24:00), the item has no observable fault.
 Proposed: drop it and regenerate (B-Q5), and report the drop rate per category.
+
+*Expected drop sources, recorded at B1 for B3 to measure:*
+- makeup-valve faults (the valve is normally shut, so they show only if makeup is
+  demanded);
+- standby-pump faults on CP-2/FP-2 (they show only after a swap onto that pump);
+- `actuator_sluggish` (never detected at constant load; it needs a ramp or a swap);
+- `stuck` sensor faults on near-constant instruments;
+- sensor faults on idle-pump instruments.
+
+Regeneration keeps the category and component and resamples background and
+details, so a component that is nearly always unobservable needs an attempt cap.
+B3 sets the cap and reports per-component attempt counts.
+
+*B3 risk, operator divergence:* the runner draws reaction delays from the `operator`
+stream only when a step executes. After onset, a fault that changes how many trim
+moves NOP-03 makes shifts the operator's later draws between the twins. The
+resulting difference is causally downstream of the fault, but it could make t_det
+earlier than the fault's own signature warrants. B3 must check whether the first
+exceedances coincide with operator actions.
 
 ### 4.3 Confusable faults
 
