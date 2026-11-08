@@ -257,56 +257,60 @@ chance on a stratum, that stratum is suspect.
 - **B4:** packaging plus leak scan. G-B4.
 - **B5:** grader, baselines, metrics report. G-B5.
 - **B6:** pilot (≈40 dev items), end-to-end validity report, then freeze 0.1 (sizes per
-  B-Q8), and distribute per §8.1.
+  B-Q8), and transfer per §8.1.
 
-### 8.1 B6 freeze and distribution (Alan, 2026-11-07)
+### 8.1 B6 freeze and transfer (Alan, 2026-11-07)
 
-**Generate once, here; distribute the artifacts.** The released files are the set
-of record. Nobody regenerates them elsewhere. Reasons:
+**Generate once, here; transfer the artifacts.** The generated files are the set of
+record. They are copied directly to Alan's laptop, where the benchmark is run. They
+are not regenerated there. Reasons:
 - hotwell's determinism holds only for the same seed, scenario, *platform* and numpy
   version. Another machine (e.g. an ARM laptop) may produce different floating-point
   trajectories, and so different dumps, t_det and confusers.
 - Dev 50 + test 200 is ≈ 650 day-long runs with regeneration and confusers,
   ≈ 90 core-hours: 3–4 h on this 32-core machine against ≈ 15–20 h on a laptop.
 
-**Reproducibility check instead of regeneration.**
-- The release records, per item: the item record, hotwell commit, numpy version,
-  platform string, the run's state and observation hashes, and file SHA-256s.
-- `scripts/verify_release.py` (new in B6) regenerates a sample of items on any
-  machine and reports hash agreement. A disagreement on another platform is
-  reported, not treated as a failure of the set.
+**Manifest and checks.**
+- The set carries a manifest, per item: the item record, hotwell commit, numpy
+  version, platform string, the run's state and observation hashes, and the SHA-256
+  of every file.
+- `scripts/verify_release.py` (new in B6) has two modes:
+  - check every file against the manifest after the transfer (integrity);
+  - optionally regenerate a sample of items and report hash agreement
+    (reproducibility). A disagreement on another platform is reported, not treated
+    as a failure of the set.
 
-**Where each split goes.**
-- **Dev split → public HuggingFace dataset:** dumps, task.md, answer keys and labels.
-- **Test split → private or gated HuggingFace dataset:** dumps, task.md, keys and
-  labels, shared with evaluators on request. Never public: a public test set would
-  enter the training corpora of exactly the models it evaluates. The alternative
-  considered was public test dumps with private keys and grading on our side. Not
-  chosen for 0.1: memorization risk and more operational work.
-- **Test master seed:** never uploaded anywhere public or committed. It is stored
-  with the private dataset or offline. The secrecy guard keeps test outputs out of
-  every git work tree, so the upload is from a path outside the repo.
+**Storage and secrecy.**
+- Both splits are written outside any git work tree (the secrecy guard enforces
+  this for the test split) and transferred to the laptop. No public distribution in
+  0.1.
+- The test master seed is never committed. It travels with the test split or is kept
+  offline.
 
-**Packaging for upload.**
+**Packaging.**
 - Compressed per-item files: gzip CSV or Parquet. Roughly 17 MB raw per item, ≈ 4 GB
   for 250, expected under 1 GB compressed.
-- A dataset card: task, schema, noise caveats (provisional levels, zero-floor bias),
-  generation provenance, and license.
-- **Canary string:** a unique GUID canary (BIG-bench convention) in every packaged
-  file of both splits and in the dataset card, so contamination of a future model
-  can be tested by asking it to complete the string. Generated once at B6 and
-  recorded here. The B4 leak scan must allow it, and the packaging test must check
-  it is present.
-- **Data license:** to choose at B6 (CC-BY-4.0 or MIT; the code is MIT).
+- A set README: task, schema, noise caveats (provisional levels, zero-floor bias) and
+  generation provenance.
+- **Canary string:** a unique GUID (BIG-bench convention) in every packaged file of
+  both splits and in the README, so contamination can be tested if any file ever
+  leaks. Generated once at B6 and recorded here. The B4 leak scan must allow it, and
+  the packaging test must check it is present. Kept although nothing is published,
+  because it is cheap. Drop it if unwanted.
 
 **Steps:**
 1. Freeze the code (tag).
-2. Generate dev and test.
+2. Generate dev and test outside the repository.
 3. Validity report.
-4. Package with the canary.
-5. Run `verify_release.py` on a sample.
-6. Upload dev public and test private.
-7. Record dataset URLs and hashes in the plan and README.
+4. Package with the canary and manifest.
+5. Run `verify_release.py` on a sample, here.
+6. Transfer to the laptop.
+7. Run `verify_release.py` integrity mode there.
+8. Record the manifest hash in the plan and README.
+
+*Superseded the same day:* the first version of this section distributed dev
+publicly and test privately on HuggingFace. Alan removed that: "I will transfer
+directly to my laptop where I'll be running the actual benchmark."
 
 ## 9. Out of scope (0.1)
 
