@@ -47,6 +47,7 @@ from hotwell_bench.secrecy import check_output_path
 RUNNER_VERSION = 1
 CAPTURE_PERIOD_S = 1.0
 COLUMNS = tuple(s.name for s in OBSERVATION_SPEC)
+_HASH_T = type(hashlib.sha256())
 VARIANTS = ("faulted", "twin")
 
 
@@ -73,64 +74,101 @@ def _diff(prev: dict, cur: dict, t: float, kind: str, cleared: str | None) -> li
     return out
 
 
+class Drive:
+    """One run in progress: simulator, background operator and capture buffers.
+
+    `advance(until)` steps the run; `snapshot()` returns an independent copy that
+    continues bit-identically (tests/test_b3_label.py). Branches (confuser runs,
+    B3) are taken from a snapshot of the twin and given a replacement scenario
+    with one extra event after the simulator's event pointer.
+    """
+
+    def __init__(self, built: BuiltItem, variant: str):
+        if variant not in VARIANTS:
+            raise ValueError(f"variant must be one of {VARIANTS}")
+        self.item = built.item
+        self.variant = variant
+        self.scenario_name = (built.scenario if variant == "faulted" else built.twin).name
+        sc = built.scenario if variant == "faulted" else built.twin
+        self.max_t = sc.max_t
+        self.sim = Simulator(copy.deepcopy(built.config), scenario=sc)
+        self.sim.initialize_steady_state(sc.load_mw)
+        op = built.item.operator
+        self.runner = ProcedureRunner(load_procedures(), streams=self.sim.streams,
+                                      reaction_s=op.reaction_s,
+                                      reaction_sigma=op.reaction_sigma)
+        self.pending = deque(built.schedule)
+        self.stride = int(round(CAPTURE_PERIOD_S / self.sim.dt))
+        obs = self.sim.last_obs
+        self.rows, self.ts = [[obs.values[c] for c in COLUMNS]], [0]
+        self.prev_alarms, self.prev_ind = dict(obs.alarms), dict(obs.indications)
+        self.events: list[dict] = []
+        self.k = 0
+        self.wall_s = 0.0
+        self.dead = False
+
+    def advance(self, until: float, progress: bool = False) -> None:
+        sim, runner, pending = self.sim, self.runner, self.pending
+        until = min(float(until), self.max_t)
+        wall0 = time.perf_counter()
+        next_report = (int(sim.t // 3600) + 1) * 3600.0
+        while not self.dead and sim.t < until - 0.5 * sim.dt:
+            while pending and pending[0][0] <= sim.t + 1e-9:
+                _, pid, params = pending.popleft()
+                runner.start(pid, params, sim.t)
+            actions = runner.tick(sim.last_obs, sim.loop_state(), sim.t) or None
+            obs = sim.step(actions)
+            self.k += 1
+            t = round(obs.t, 2)
+            cur_alarms, cur_ind = dict(obs.alarms), dict(obs.indications)
+            if cur_alarms != self.prev_alarms:
+                self.events += _diff(self.prev_alarms, cur_alarms, t, "alarm", "clear")
+                self.prev_alarms = cur_alarms
+            if cur_ind != self.prev_ind:
+                self.events += _diff(self.prev_ind, cur_ind, t, "indication", None)
+                self.prev_ind = cur_ind
+            if self.k % self.stride == 0:
+                self.rows.append([obs.values[c] for c in COLUMNS])
+                self.ts.append(self.k // self.stride)
+            if progress and sim.t >= next_report:
+                print(f"  [{self.item.item_id} {self.variant}] t={sim.t / 3600:5.2f} h  "
+                      f"wall {self.wall_s + time.perf_counter() - wall0:6.1f} s", flush=True)
+                next_report += 3600.0
+            if obs.plant_dead:
+                self.dead = True
+        self.wall_s += time.perf_counter() - wall0
+
+    def snapshot(self) -> Drive:
+        """Independent copy. The simulator's running hashlib objects cannot be
+        deep-copied, so the memo is pre-seeded with their `.copy()`."""
+        memo = {id(v): v.copy() for v in vars(self.sim).values() if isinstance(v, _HASH_T)}
+        return copy.deepcopy(self, memo)
+
+    def result(self) -> RunResult:
+        sim = self.sim
+        summary = {
+            "item_id": self.item.item_id, "variant": self.variant,
+            "scenario": self.scenario_name,
+            "t_end": sim.t, "steps": self.k, "plant_dead": bool(sim.disc.plant_dead),
+            "mft": bool(sim.disc.mft), "turbine_trip": bool(sim.disc.turbine_trip),
+            "pumps_tripped": sorted(p for p, m in sim.disc.pump_modes.items()
+                                    if m == "tripped"),
+            "first_out": [[round(t, 2), cid] for t, cid in sim.engine.first_out],
+            "rejected": [[r.t, json.dumps(r.action, sort_keys=True), r.reason]
+                         for r in sim.rejected],
+            "state_hash": sim.state_history_hash, "observation_hash": sim.observation_hash,
+            "wall_s": self.wall_s,
+        }
+        return RunResult(self.item.item_id, self.variant, np.asarray(self.ts, dtype=np.int64),
+                         np.asarray(self.rows, dtype=np.float64), list(self.events),
+                         [asdict(e) for e in self.runner.log], summary)
+
+
 def run_built(built: BuiltItem, variant: str, until: float | None = None,
               progress: bool = False) -> RunResult:
-    if variant not in VARIANTS:
-        raise ValueError(f"variant must be one of {VARIANTS}")
-    sc = built.scenario if variant == "faulted" else built.twin
-    max_t = sc.max_t if until is None else min(float(until), sc.max_t)
-    sim = Simulator(copy.deepcopy(built.config), scenario=sc)
-    sim.initialize_steady_state(sc.load_mw)
-    op = built.item.operator
-    runner = ProcedureRunner(load_procedures(), streams=sim.streams,
-                             reaction_s=op.reaction_s, reaction_sigma=op.reaction_sigma)
-    pending = deque(s for s in built.schedule if s[0] < max_t)
-    stride = int(round(CAPTURE_PERIOD_S / sim.dt))
-    obs = sim.last_obs
-    rows, ts = [[obs.values[c] for c in COLUMNS]], [0]
-    prev_alarms, prev_ind = dict(obs.alarms), dict(obs.indications)
-    events: list[dict] = []
-    wall0 = time.perf_counter()
-    k = 0
-    next_report = 3600.0
-    while sim.t < max_t - 0.5 * sim.dt:
-        while pending and pending[0][0] <= sim.t + 1e-9:
-            _, pid, params = pending.popleft()
-            runner.start(pid, params, sim.t)
-        actions = runner.tick(sim.last_obs, sim.loop_state(), sim.t) or None
-        obs = sim.step(actions)
-        k += 1
-        t = round(obs.t, 2)
-        cur_alarms, cur_ind = dict(obs.alarms), dict(obs.indications)
-        if cur_alarms != prev_alarms:
-            events += _diff(prev_alarms, cur_alarms, t, "alarm", "clear")
-            prev_alarms = cur_alarms
-        if cur_ind != prev_ind:
-            events += _diff(prev_ind, cur_ind, t, "indication", None)
-            prev_ind = cur_ind
-        if k % stride == 0:
-            rows.append([obs.values[c] for c in COLUMNS])
-            ts.append(k // stride)
-        if progress and sim.t >= next_report:
-            print(f"  [{built.item.item_id} {variant}] t={sim.t / 3600:5.2f} h  "
-                  f"wall {time.perf_counter() - wall0:6.1f} s", flush=True)
-            next_report += 3600.0
-        if obs.plant_dead:
-            break
-    summary = {
-        "item_id": built.item.item_id, "variant": variant, "scenario": sc.name,
-        "t_end": sim.t, "steps": k, "plant_dead": bool(sim.disc.plant_dead),
-        "mft": bool(sim.disc.mft), "turbine_trip": bool(sim.disc.turbine_trip),
-        "pumps_tripped": sorted(p for p, m in sim.disc.pump_modes.items() if m == "tripped"),
-        "first_out": [[round(t, 2), cid] for t, cid in sim.engine.first_out],
-        "rejected": [[r.t, json.dumps(r.action, sort_keys=True), r.reason]
-                     for r in sim.rejected],
-        "state_hash": sim.state_history_hash, "observation_hash": sim.observation_hash,
-        "wall_s": time.perf_counter() - wall0,
-    }
-    return RunResult(built.item.item_id, variant, np.asarray(ts, dtype=np.int64),
-                     np.asarray(rows, dtype=np.float64), events,
-                     [asdict(e) for e in runner.log], summary)
+    d = Drive(built, variant)
+    d.advance(d.max_t if until is None else until, progress=progress)
+    return d.result()
 
 
 # ------------------------------------------------------------------ cache

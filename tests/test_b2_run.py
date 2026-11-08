@@ -123,3 +123,47 @@ def test_quiet_day_mirror_reproduces_hotwells_released_hashes():
     assert s["state_hash"] == "e05dc79db6be78ca52116121bb1c52616433f2ec4b22a0bc9ec6c4f69c201ee1"
     assert s["observation_hash"] == ("1323b1701670bd2631beff6119023be41ea47dc40c85900bf07e8ee5f"
                                      "7e05828")
+
+
+def test_snapshot_continues_bit_identically_and_leaves_the_original_alone():
+    from hotwell_bench.run import Drive
+    b = build(_item(fault=FP1_DEGRADE, cp_swap=40))
+    whole = Drive(b, "faulted")
+    whole.advance(150)
+    part = Drive(b, "faulted")
+    part.advance(50)
+    t_before, k_before = part.sim.t, part.k
+    branch = part.snapshot()
+    branch.advance(150)
+    print(f"\nwhole {whole.sim.state_history_hash[:16]}… branch "
+          f"{branch.sim.state_history_hash[:16]}…; original still at k={part.k}")
+    assert branch.sim.state_history_hash == whole.sim.state_history_hash
+    assert branch.sim.observation_hash == whole.sim.observation_hash
+    assert np.array_equal(branch.result().values, whole.result().values)
+    assert branch.result().shift_log == whole.result().shift_log
+    assert (part.sim.t, part.k) == (t_before, k_before)
+    assert branch.runner.streams is branch.sim.streams       # identity kept inside the copy
+
+
+def test_event_injected_into_a_branch_equals_a_run_with_it_from_the_start():
+    import dataclasses
+
+    from hotwell.scenario import ScenarioEvent
+
+    from hotwell_bench.run import Drive
+    b = build(_item())
+    ev = ScenarioEvent(80.0, "pump_degrade", {"target": "cp1", "head_factor": 0.98})
+    sc = dataclasses.replace(b.twin, events=tuple(sorted(b.twin.events + (ev,),
+                                                         key=lambda e: e.t)))
+    ref = Drive(b, "twin")
+    ref.sim.scenario = sc                     # swapped at t = 0
+    ref.advance(150)
+    base = Drive(b, "twin")
+    base.advance(60)
+    br = base.snapshot()
+    br.sim.scenario = sc                      # swapped at t = 60, before the event
+    br.advance(150)
+    plain = Drive(b, "twin")
+    plain.advance(150)
+    assert br.sim.state_history_hash == ref.sim.state_history_hash
+    assert br.sim.state_history_hash != plain.sim.state_history_hash
