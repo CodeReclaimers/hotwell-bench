@@ -228,6 +228,9 @@ chance on a stratum, that stratum is suspect.
 ## 7. Validity gates (each blocks the next stage)
 
 - **G-B1, generator:** hand-audit plots of 10 items (2 per major category + 2 null).
+  **PASSED 2026-11-07 (Alan's review of `scripts/audit_items.py --master 20261107`):**
+  every fault item shows its change except the stuck makeup valve (dev-0014), which
+  B3 is to drop as unobservable; the nulls show none.
   The fault is where the key says it is, the background matches the record, and
   nothing else happens.
 - **G-B2, labelling:** for step items at the 0.4.0 sweep magnitudes, t_det − t_inj

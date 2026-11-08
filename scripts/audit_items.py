@@ -120,13 +120,18 @@ def plot(it, fa, tw, s, out: Path) -> Path:
         if len(top) < 4 and c not in top:   # pad with key process variables
             top.append(c)
     panels = ["mw_out", "frequency", *top]
-    fig, axes = plt.subplots(len(panels), 1, figsize=(12, 2.0 * len(panels)), sharex=True)
+    fig, axes_all = plt.subplots(len(panels) + 1, 1, figsize=(12, 2.0 * (len(panels) + 1)),
+                                 sharex=True)
+    axes, ax_diff = axes_all[:-1], axes_all[-1]
     th, tt = fa.t / 3600.0, tw.t / 3600.0
     for ax, c in zip(axes, panels, strict=True):
         j = COLUMNS.index(c)
         k = 1e-6 if c == "mw_out" else 1.0
-        ax.plot(tt, tw.values[:, j] * k, lw=0.6, color="0.55", label="twin (no fault)")
-        ax.plot(th, fa.values[:, j] * k, lw=0.6, color="tab:red", label="faulted")
+        # faulted underneath, twin on top and semi-transparent: where they coincide
+        # (always before onset) the twin stays visible instead of being painted over
+        ax.plot(th, fa.values[:, j] * k, lw=0.6, color="tab:red", label="faulted", zorder=1)
+        ax.plot(tt, tw.values[:, j] * k, lw=0.5, color="0.15", alpha=0.45,
+                label="twin (no fault)", zorder=2)
         ax.set_ylabel(c + (" [MW]" if c == "mw_out" else ""), fontsize=8)
         ax.tick_params(labelsize=7)
         if it.fault is not None:
@@ -149,8 +154,23 @@ def plot(it, fa, tw, s, out: Path) -> Path:
     axes[0].set_title(f"{it.item_id}: " + ("no fault" if f is None else
                       f"{f.category} / {f.component} — {f.mechanism} {f.params}, onset "
                       f"{hms(f.t_inj)} ({f.shape})"), fontsize=9)
-    axes[-1].set_xlabel("time [h]")
-    axes[-1].set_xlim(0, 24)
+    # (faulted - twin) / D_i: shows the fault's effect even where traces overlap exactly
+    n = min(len(fa.t), len(tw.t))
+    for c, color in zip(top, ("tab:red", "tab:blue", "tab:green", "tab:purple"), strict=False):
+        j = COLUMNS.index(c)
+        ax_diff.plot(fa.t[:n] / 3600.0, (fa.values[:n, j] - tw.values[:n, j])
+                     / detection_scale(c), lw=0.5, color=color, label=c)
+    for y in (-1.0, 1.0):
+        ax_diff.axhline(y, color="0.3", lw=0.6, ls=":")
+    if it.fault is not None:
+        ax_diff.axvline(it.fault.t_inj / 3600, color="tab:red", lw=0.8, ls="--")
+    ax_diff.set_ylabel("(faulted − twin) / D_i", fontsize=8)
+    ax_diff.tick_params(labelsize=7)
+    leg = ax_diff.legend(fontsize=7, loc="upper left", ncol=4)
+    for line in leg.get_lines():
+        line.set_linewidth(2.0)
+    ax_diff.set_xlabel("time [h]")
+    ax_diff.set_xlim(0, 24)
     fig.tight_layout()
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{it.item_id}.png"
