@@ -366,6 +366,13 @@ are not regenerated there. Reasons:
 7. Run `verify_release.py` integrity mode there.
 8. Record the manifest hash in the plan and README.
 
+*As done (2026-11-08):* step 1 was skipped before generation and done afterwards:
+tag `v0.1.0` is at the packaging commit; generation ran at `34f9560`, and `git diff
+34f9560 v0.1.0` touches no generation code (only new packaging/grading/verification
+files and docs). Manifest SHA-256: dev `c83fea28ec264117bdfa7d5621a060dafd6d21c571f3b8e4fa1f803232463b3d`,
+test `88b11882cc7839074c596fdbdb6d44f8c5eae22a838316695e5cfd75e8df5cb0` (199 items;
+one excluded at the attempt cap). Steps 6–7 are Alan's.
+
 *Superseded the same day:* the first version of this section distributed dev
 publicly and test privately on HuggingFace. Alan removed that: "I will transfer
 directly to my laptop where I'll be running the actual benchmark."

@@ -84,6 +84,14 @@ MIT. See [LICENSE](LICENSE).
 ## Status
 
 B0–B5 complete: generation, labelling, packaging with leak scan, grader and baselines.
-Gates G-B1 to G-B5 pass (G-B5 on the dev split). The 0.1 dev split (50 items) is
-packaged; the test split (200 items) is being generated (B6). Plan:
-`PLAN-bench-0.1.md`. Progress logs: `progress-*.md`.
+Gates G-B1 to G-B5 pass on both splits. 0.1 splits (generated at commit `34f9560`,
+packaged at `v0.1.0`; the files are distributed directly, not from this repository):
+
+| split | items | of which null | `manifest.json` SHA-256 |
+|---|---|---|---|
+| dev | 50 | 9 | `c83fea28ec264117bdfa7d5621a060dafd6d21c571f3b8e4fa1f803232463b3d` |
+| test | 199 | 39 | `88b11882cc7839074c596fdbdb6d44f8c5eae22a838316695e5cfd75e8df5cb0` |
+
+Test was sampled at 200; one item (an instrument fault on `makeup_flow`) stayed
+unobservable through the attempt cap and is excluded. Plan: `PLAN-bench-0.1.md`.
+Progress logs: `progress-*.md`.
