@@ -174,6 +174,8 @@ moves NOP-03 makes shifts the operator's later draws between the twins. The
 resulting difference is causally downstream of the fault, but it could make t_det
 earlier than the fault's own signature warrants. B3 must check whether the first
 exceedances coincide with operator actions.
+*Resolved by construction (§4.4):* the twin replays the faulted run's actions, so no
+operator difference between the twins can exist.
 
 ### 4.3 Confusable faults
 
@@ -200,6 +202,23 @@ confusions someone thought of.
   are too slow to reach slew limits). They hit the attempt cap 8 of 8 times in the
   pilot. To revisit when the day design can reveal them (e.g. a makeup demand or a fast
   load step).
+
+**Pilot 2 (2026-11-08, dev 0–49, master 20261107, replay twins, exclusions;
+`scripts/label_items.py`, table via `scripts/pilot_table.py`):**
+- 41 accepted, 9 null, 0 excluded at the cap. Regenerations: 6 unobservable attempts
+  out of 47 fault attempts (pump 4/11, valve 1/7, combustion 1/7).
+- Easy (plant death caused by the fault): 5, all stuck_actuator.
+- t_det rule: level 36, variance 5. All 5 instrument faults happened to be
+  `noise_increase` (the 4000-sample sampler test gives 104/82/86/90/79 over the five
+  kinds). So the pilot exercised no bias, drift, stuck or lag sensor fault.
+- Confusers: 29 items checked, 10 confusable. The condensate pair (CP head loss ↔ DA
+  LCV Cv loss) was confusable in 5/5, in both directions. Feed pair (FP ↔ FRV) 1/6;
+  combustion ↔ firing-rate bias 3/6; fouling ↔ cond-pressure bias 1/5; stuck
+  actuator ↔ stuck position sensor 0/7 (5 of those separated by plant death).
+- Delays over 10⁴ s, audited:
+  - dev-0003 (FP-2, standby until the FP swap at 76697 s): detected 17 s after the swap.
+  - dev-0026 (FRV −2.4 %, injected in the 38 MW trough at 25066 s): detected at
+    44828 s, during the ramp back to 60 MW (43626–46321 s).
 
 ## 5. Packaging (B4)
 
@@ -248,10 +267,12 @@ chance on a stratum, that stratum is suspect.
   nothing else happens.
 - **G-B2, labelling:** for step items at the 0.4.0 sweep magnitudes, t_det − t_inj
   reproduces `fault_detectability.py` within 1 s. The twin's state hash equals a
-  standalone fault-free run's.
+  standalone fault-free run's. **PASSED** (`tests/test_b3_label.py`, slow; 41/41 rows
+  exact; re-passed under replay twins, progress-20261108.md).
 - **G-B3, confusers:** a seeded known confusion (FP-1 vs FRV with no swap after
   onset) is detected as confusable. A known separable pair (the same pair with an FP
-  swap after onset) is not.
+  swap after onset) is not. **PASSED** (`tests/test_b3_confusers.py`, slow; re-passed
+  under replay twins, progress-20261108.md).
 - **G-B4, packaging:** the leak scan passes, and a mutation test plants a forbidden
   token and fails it. Re-packaging is byte-identical.
 - **G-B5, grader:** oracle answers score 1.0; always-`none` scores the null fraction
@@ -266,7 +287,7 @@ chance on a stratum, that stratum is suspect.
 - **B2:** runner (faulted + twin, 1 Hz capture, events and shift log), process-pool
   parallelism, cache. G-B1.
 - **B3:** labelling (t_det table, trips/alarms, unobservable filter, confusers);
-  ramped-onset detectability sweep. G-B2, G-B3.
+  ramped-onset detectability sweep. G-B2, G-B3. **Done 2026-11-08** (pilot 2, §4.4).
 - **B4:** packaging plus leak scan. G-B4.
 - **B5:** grader, baselines, metrics report. G-B5.
 - **B6:** pilot (≈40 dev items), end-to-end validity report, then freeze 0.1 (sizes per

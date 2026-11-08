@@ -29,6 +29,8 @@ MIT. See [LICENSE](LICENSE).
 
 ## Status
 
-B0 (skeleton, pins, determinism gates), B1 (item records, sampler, builder) and B2
-(runner, cache, parallel runs) complete. Gate G-B1 (hand audit of 10 dev items,
-`scripts/audit_items.py --master 20261107`) passed. B3 (labelling) is next.
+B0 (skeleton, pins, determinism gates), B1 (item records, sampler, builder), B2
+(runner, cache, parallel runs) and B3 (labelling, regeneration, confusers,
+action-replay twins) complete. Gates G-B1 (hand audit of 10 dev items,
+`scripts/audit_items.py --master 20261107`), G-B2 and G-B3 passed. B4 (packaging and
+leak scan) is next.
