@@ -17,7 +17,15 @@ from hotwell_bench.items import (
     detection_scale,
     sample_item,
 )
-from hotwell_bench.taxonomy import CATEGORIES, FAULT_CATEGORIES, SENSOR_KINDS, SENSOR_MECHANISM
+from hotwell_bench.taxonomy import (
+    CATEGORIES,
+    EXCLUDED_CATEGORIES,
+    EXCLUDED_COMPONENTS,
+    FAULT_CATEGORIES,
+    SAMPLED_CATEGORIES,
+    SENSOR_KINDS,
+    SENSOR_MECHANISM,
+)
 
 MASTER = 20261107          # a dev-only seed; test-split seeds never appear in this repo
 N_DIST = 4000
@@ -105,10 +113,11 @@ def test_sampler_rejects_bad_inputs():
             sample_item(*args)
 
 
-# Self-pin (B1, 2026-11-07): the record for (MASTER, dev, 0). A frozen item set
+# Self-pin (B1, 2026-11-07; re-pinned 2026-11-08 for the 0.1 sampling exclusions): the
+# record for (MASTER, dev, 0). A frozen item set
 # is only reproducible if the sampler is, so any sampler change must show here
 # and be a deliberate re-pin.
-PIN_DEV0 = "c39f2fe7d08b55636910aee3bbf6b45667886563a23843564a9be617154eac6d"
+PIN_DEV0 = "a252b3ff38678bbbbef9a75d5a01eb91d5ef231c4c954a1e247ba3d40a7bd5f3"
 
 
 def test_sampler_pin():
@@ -139,13 +148,15 @@ def test_sampled_distributions_match_the_plan():
           f"{sum(ramp) / len(ramp):.3f} (plan {P.P_RAMP})")
     for c in FAULT_CATEGORIES:
         print(f"  {c:30s} {cats[c]:5d}")
+    assert not set(cats) & EXCLUDED_CATEGORIES
+    assert not {(f.category, f.component) for f in faults} & EXCLUDED_COMPONENTS
     print(f"  sensor kinds {dict(kinds)}")
     assert _binom_ok(n_null, N_DIST, P.P_NULL)
     assert _binom_ok(flat, N_DIST, P.P_FLAT_DAY)
     assert _binom_ok(cp, N_DIST, P.P_SWAP) and _binom_ok(fp, N_DIST, P.P_SWAP)
     assert _binom_ok(sum(ramp), len(ramp), P.P_RAMP)
-    for c in FAULT_CATEGORIES:
-        assert _binom_ok(cats[c], len(faults), 1 / len(FAULT_CATEGORIES)), c
+    for c in SAMPLED_CATEGORIES:
+        assert _binom_ok(cats[c], len(faults), 1 / len(SAMPLED_CATEGORIES)), c
     for k in SENSOR_KINDS:
         assert _binom_ok(kinds[k], sum(kinds.values()), 1 / len(SENSOR_KINDS)), k
 

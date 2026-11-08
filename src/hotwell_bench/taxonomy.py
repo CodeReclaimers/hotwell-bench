@@ -39,7 +39,20 @@ CATEGORIES: dict[str, tuple[str, dict[str, str]]] = {
     "boiler_tube_leak": ("tube_leak", {"—": ""}),
     "instrument_fault": (SENSOR_MECHANISM, {s.name: s.name for s in OBSERVATION_SPEC}),
 }
-FAULT_CATEGORIES = tuple(CATEGORIES)          # sampling order is this order
+FAULT_CATEGORIES = tuple(CATEGORIES)          # the answer vocabulary (all categories)
+
+#: 0.1 sampling exclusions (PLAN-bench-0.1.md §4.4, Alan 2026-11-08): never observable
+#: in 0.1 days (8/8 pilot attempts hit the cap). They stay in the answer vocabulary,
+#: so the closed answer list remains complete against hotwell; they just never occur.
+EXCLUDED_CATEGORIES = frozenset({"actuator_sluggish"})
+EXCLUDED_COMPONENTS = frozenset({("valve_capacity_loss", "makeup valve"),
+                                 ("stuck_actuator", "makeup valve")})
+SAMPLED_CATEGORIES = tuple(c for c in FAULT_CATEGORIES if c not in EXCLUDED_CATEGORIES)
+
+
+def sampled_components(category: str) -> list[str]:
+    """Component names the 0.1 sampler may draw for a category, in table order."""
+    return [c for c in CATEGORIES[category][1] if (category, c) not in EXCLUDED_COMPONENTS]
 SENSOR_KINDS = ("bias", "drift", "stuck", "lag", "noise_increase")
 
 

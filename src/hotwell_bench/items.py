@@ -32,11 +32,12 @@ from hotwell.sensors import OBSERVATION_SPEC
 from hotwell_bench import presets as P
 from hotwell_bench.taxonomy import (
     CATEGORIES,
-    FAULT_CATEGORIES,
     NULL_CATEGORY,
+    SAMPLED_CATEGORIES,
     SENSOR_KINDS,
     SENSOR_MECHANISM,
     plantwide,
+    sampled_components,
 )
 
 SCHEMA = "hotwell-bench/item/1"
@@ -267,9 +268,9 @@ def sample_item(master_seed: int, split: str, index: int, attempt: int = 0) -> I
     s = _rng(master_seed, sid, index, _TAG_STRUCTURE)
     u_null, u_cat, u_comp = s.random(3)          # fixed: 3 draws
     null = bool(u_null < P.P_NULL)
-    category = FAULT_CATEGORIES[min(int(u_cat * len(FAULT_CATEGORIES)),
-                                    len(FAULT_CATEGORIES) - 1)]
-    names = list(CATEGORIES[category][1])
+    category = SAMPLED_CATEGORIES[min(int(u_cat * len(SAMPLED_CATEGORIES)),
+                                      len(SAMPLED_CATEGORIES) - 1)]
+    names = sampled_components(category)
     component = names[min(int(u_comp * len(names)), len(names) - 1)]
 
     d = _rng(master_seed, sid, index, _TAG_DETAIL, attempt)
