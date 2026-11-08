@@ -133,6 +133,24 @@ sensed difference is the fault's effect alone. Per item we record:
   strata).
 - whether any protective trip or alarm occurs in the faulted run, and when.
 
+*B2 finding: the criterion above sees only level changes (required change for B3).*
+For faults that change a signal's variance or dynamics, the faulted − twin difference
+is zero-mean noise, so the sustained-exceedance rule structurally cannot fire:
+- **`stuck` sensor:** the faulted reading is flat and the twin noisy, so the
+  difference is ≈ 1σ of noise and rarely exceeds 3σ for 10 s. Every stuck sensor on a
+  noisy instrument would be dropped as unobservable, though a flatline is among the
+  most visible faults.
+- **`noise_increase`:** the difference has σ = (f − 1)σ_i. At dev-0017's f = 2.66 it
+  exceeds 3σ_i ≈ 7 % of the time, so 10 consecutive seconds essentially never occur.
+- **`lag`:** level differences appear only during transients, so the rule catches them
+  only if the day has one.
+
+B3 must add kind-appropriate statistics on the faulted run alone (twin as reference)
+and take t_det as the earliest of them, each with a gate test on a seeded case:
+- a run of identical quantized readings longer than the twin ever shows, for stuck;
+- a rolling standard-deviation ratio, for noise_increase;
+- the existing difference rule, for level and lag effects.
+
 ### 4.2 Unobservable items
 
 If t_det does not exist (no exceedance before 24:00), the item has no observable fault.
