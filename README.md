@@ -40,7 +40,7 @@ repository.
 **A packaged split:**
 ```
 <split>/
-  README.md  task.md  manifest.json        (manifest: SHA-256 of every file below; no answers)
+  README.md  task.md  manifest.json        (manifest: SHA-256 of README, task.md, manual/, items/; no answers)
   manual/*.md                              hotwell v0.4.0 operator manual (optional input)
   items/<item_id>/
     instruments.csv.gz   1 Hz, t_s = 1 … 86400 (shorter if the unit was lost); 26 instruments, SI
@@ -48,10 +48,12 @@ repository.
     shift_log.txt        operator procedure log
     task.md              task statement + answer schema + closed answer list (same for all items)
   keys/                                    answers — never shown to a model
-    <item_id>.json  manifest.json  [MASTER_SEED]
+    <item_id>.json  manifest.json  [MASTER_SEED]   (keys/manifest.json: SHA-256 of each key)
 ```
-The first line of every file under `items/` and `manual/` is a comment carrying the
-canary.
+The first line of every file under `items/` (of the decompressed CSV for
+`instruments.csv.gz`) and `manual/`, and of `task.md` and `README.md`, is a comment
+carrying the canary. `scripts/verify_release.py SPLIT_DIR` checks this layout and the
+hashes using only the standard library.
 
 **What a benchmark harness must supply (not in this repository):**
 - the agent loop: one item per episode;
