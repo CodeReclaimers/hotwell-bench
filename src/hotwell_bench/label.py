@@ -146,8 +146,6 @@ class Label:
     instrument: str | None
     per_rule: dict = field(default_factory=dict)    # rule -> {instrument: t}
     t_first_divergence: int | None = None
-    t_operator_divergence: float | None = None
-    operator_mediated: bool = False
     easy: bool = False                # a protective trip or plant death caused by the fault
     first_out: list = field(default_factory=list)
     plant_dead_t: float | None = None
@@ -158,18 +156,6 @@ class Label:
         return asdict(self)
 
 
-def _operator_divergence(fa: RunResult, tw: RunResult) -> float | None:
-    """First time the two shift logs differ (time, procedure, step or outcome)."""
-    a = [(e["t"], e["proc_id"], e["step_id"], e["outcome"]) for e in fa.shift_log]
-    b = [(e["t"], e["proc_id"], e["step_id"], e["outcome"]) for e in tw.shift_log]
-    for x, y in zip(a, b, strict=False):
-        if x != y:
-            return float(min(x[0], y[0]))
-    if len(a) != len(b):
-        return float((a if len(a) > len(b) else b)[min(len(a), len(b))][0])
-    return None
-
-
 def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult) -> Label:
     ev = evidence(fa.values, tw.values)
     per_rule = {r: {COLUMNS[i]: t for i, t in enumerate(ev[r]) if t is not None}
@@ -177,7 +163,6 @@ def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult) -> Label:
     cands = [(t, r, inst) for r in RULES for inst, t in per_rule[r].items()]
     divs = [t for t in ev["first_divergence"] if t is not None]
     t_det, rule, inst = min(cands) if cands else (None, None, None)
-    t_op = _operator_divergence(fa, tw)
     twin_out = {tuple(x) for x in tw.summary["first_out"]}
     new_out = [x for x in fa.summary["first_out"] if tuple(x) not in twin_out]
     twin_acts = {(e["t"], e["id"]) for e in tw.events
@@ -191,8 +176,6 @@ def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult) -> Label:
         observable=None if f is None else t_det is not None,
         t_det=t_det, rule=rule, instrument=inst, per_rule=per_rule,
         t_first_divergence=min(divs) if divs else None,
-        t_operator_divergence=t_op,
-        operator_mediated=bool(t_det is not None and t_op is not None and t_op <= t_det),
         easy=bool(new_out) or (fa.summary["plant_dead"] and not tw.summary["plant_dead"]),
         first_out=new_out,
         plant_dead_t=fa.summary["t_end"] if fa.summary["plant_dead"] else None,

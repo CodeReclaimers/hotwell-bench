@@ -10,7 +10,10 @@ captures:
 - `shift_log`: the ProcedureRunner's log entries;
 - `summary`: end time, trips, first-out, rejected actions, hashes, wall time.
 
-The drive loop is hotwell's quiet-day loop (scripts/quiet_day.py at v0.4.0):
+The twin replays the faulted run's recorded operator actions open-loop
+(Drive(replay=...)), so its differences from the faulted run are the plant's
+response to the fault under the same actions (PLAN §4.4). The closed-loop drive loop
+for the faulted run is hotwell's quiet-day loop (scripts/quiet_day.py at v0.4.0):
 start due procedures, `runner.tick`, then `sim.step`. A record that mirrors
 the quiet day reproduces its state hash (tests/test_b2_run.py, slow).
 
@@ -29,7 +32,7 @@ import sys
 import time
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -44,7 +47,7 @@ from hotwell_bench.provenance import environment_record
 from hotwell_bench.secrecy import check_output_path
 
 #: bump whenever capture semantics change; part of the cache key
-RUNNER_VERSION = 1
+RUNNER_VERSION = 2   # 2: action-replay twins; actions recorded (2026-11-08)
 CAPTURE_PERIOD_S = 1.0
 COLUMNS = tuple(s.name for s in OBSERVATION_SPEC)
 _HASH_T = type(hashlib.sha256())
@@ -58,8 +61,9 @@ class RunResult:
     t: np.ndarray            # int64 seconds, shape (n,)
     values: np.ndarray       # float64, shape (n, len(COLUMNS))
     events: list             # [{"t", "kind": "alarm"|"indication", "id", "value"}]
-    shift_log: list          # [LogEntry as dict]
+    shift_log: list          # [LogEntry as dict]; empty for a replay run
     summary: dict
+    actions: list = field(default_factory=list)   # [[step k, action dict], ...]
 
     def column(self, name: str) -> np.ndarray:
         return self.values[:, COLUMNS.index(name)]
@@ -83,9 +87,17 @@ class Drive:
     with one extra event after the simulator's event pointer.
     """
 
-    def __init__(self, built: BuiltItem, variant: str):
+    def __init__(self, built: BuiltItem, variant: str, replay: list | None = None):
+        """replay: [[k, actions], ...] recorded by another run. When given, those
+        actions are applied before step k+1 exactly as recorded and the background
+        operator does not run. The twin variant is always a replay (of the faulted
+        run's actions, plan §4.4)."""
         if variant not in VARIANTS:
             raise ValueError(f"variant must be one of {VARIANTS}")
+        if variant == "twin" and replay is None:
+            raise ValueError("the twin replays the faulted run's actions: pass replay=")
+        self.replay = None if replay is None else {int(k): a for k, a in replay}
+        self.actions: list = []
         self.item = built.item
         self.variant = variant
         self.scenario_name = (built.scenario if variant == "faulted" else built.twin).name
@@ -97,7 +109,7 @@ class Drive:
         self.runner = ProcedureRunner(load_procedures(), streams=self.sim.streams,
                                       reaction_s=op.reaction_s,
                                       reaction_sigma=op.reaction_sigma)
-        self.pending = deque(built.schedule)
+        self.pending = deque(built.schedule) if replay is None else deque()
         self.stride = int(round(CAPTURE_PERIOD_S / self.sim.dt))
         obs = self.sim.last_obs
         self.rows, self.ts = [[obs.values[c] for c in COLUMNS]], [0]
@@ -113,10 +125,15 @@ class Drive:
         wall0 = time.perf_counter()
         next_report = (int(sim.t // 3600) + 1) * 3600.0
         while not self.dead and sim.t < until - 0.5 * sim.dt:
-            while pending and pending[0][0] <= sim.t + 1e-9:
-                _, pid, params = pending.popleft()
-                runner.start(pid, params, sim.t)
-            actions = runner.tick(sim.last_obs, sim.loop_state(), sim.t) or None
+            if self.replay is not None:
+                actions = self.replay.get(self.k)
+            else:
+                while pending and pending[0][0] <= sim.t + 1e-9:
+                    _, pid, params = pending.popleft()
+                    runner.start(pid, params, sim.t)
+                actions = runner.tick(sim.last_obs, sim.loop_state(), sim.t) or None
+            if actions:
+                self.actions.append([self.k, copy.deepcopy(actions)])
             obs = sim.step(actions)
             self.k += 1
             t = round(obs.t, 2)
@@ -157,15 +174,24 @@ class Drive:
             "rejected": [[r.t, json.dumps(r.action, sort_keys=True), r.reason]
                          for r in sim.rejected],
             "state_hash": sim.state_history_hash, "observation_hash": sim.observation_hash,
-            "wall_s": self.wall_s,
+            "wall_s": self.wall_s, "replay": self.replay is not None,
         }
         return RunResult(self.item.item_id, self.variant, np.asarray(self.ts, dtype=np.int64),
                          np.asarray(self.rows, dtype=np.float64), list(self.events),
-                         [asdict(e) for e in self.runner.log], summary)
+                         [asdict(e) for e in self.runner.log], summary,
+                         copy.deepcopy(self.actions))
 
 
 def run_built(built: BuiltItem, variant: str, until: float | None = None,
-              progress: bool = False) -> RunResult:
+              progress: bool = False, faulted: RunResult | None = None) -> RunResult:
+    """Run one variant. The twin replays `faulted`'s actions (running the faulted
+    variant first if not given) and stops where the faulted run stopped."""
+    if variant == "twin":
+        if faulted is None:
+            faulted = run_built(built, "faulted", until=until)
+        d = Drive(built, "twin", replay=faulted.actions)
+        d.advance(float(faulted.summary["t_end"]), progress=progress)
+        return d.result()
     d = Drive(built, variant)
     d.advance(d.max_t if until is None else until, progress=progress)
     return d.result()
@@ -194,7 +220,7 @@ def save(res: RunResult, item: ItemRecord, cache_dir: str | Path, until=None) ->
     os.replace(tmp, npz)
     meta = {"key": cache_key(item, res.variant, until), "columns": COLUMNS,
             "item": json.loads(item.to_json()), "events": res.events,
-            "shift_log": res.shift_log, "summary": res.summary}
+            "shift_log": res.shift_log, "summary": res.summary, "actions": res.actions}
     js.write_text(json.dumps(meta, sort_keys=True))
 
 
@@ -207,7 +233,7 @@ def load(item: ItemRecord, variant: str, cache_dir: str | Path, until=None) -> R
         return None
     with np.load(npz) as z:
         return RunResult(item.item_id, variant, z["t"], z["values"], meta["events"],
-                         meta["shift_log"], meta["summary"])
+                         meta["shift_log"], meta["summary"], meta["actions"])
 
 
 def run_cached(item: ItemRecord, variant: str, cache_dir: str | Path | None,
@@ -217,7 +243,8 @@ def run_cached(item: ItemRecord, variant: str, cache_dir: str | Path | None,
         hit = load(item, variant, cache_dir, until)
         if hit is not None:
             return hit
-    res = run_built(build(item), variant, until=until, progress=progress)
+    fa = run_cached(item, "faulted", cache_dir, until) if variant == "twin" else None
+    res = run_built(build(item), variant, until=until, progress=progress, faulted=fa)
     if cache_dir is not None:
         save(res, item, cache_dir, until)
     return res
@@ -232,21 +259,23 @@ def _task(args) -> tuple[str, str, dict]:
 
 def run_items(items: list[ItemRecord], cache_dir: str | Path, workers: int | None = None,
               until: float | None = None) -> dict[tuple[str, str], dict]:
-    """Run every item's faulted and twin variants in a process pool (spawned
-    workers), caching results. Returns {(item_id, variant): summary}."""
+    """Run every item's faulted variant, then its twin (which replays the faulted
+    run's actions), in a process pool (spawned workers), caching results.
+    Returns {(item_id, variant): summary}."""
     for it in items:
         check_output_path(cache_dir, it.split)
-    tasks = [(it.to_json(), v, str(cache_dir), until) for it in items for v in VARIANTS]
     out = {}
     workers = workers or max(1, (os.cpu_count() or 2) - 2)
-    with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
-                             mp_context=get_context("spawn")) as ex:
-        futures = [ex.submit(_task, a) for a in tasks]
-        for n, fut in enumerate(as_completed(futures), 1):
-            iid, v, summ = fut.result()
-            out[(iid, v)] = summ
-            print(f"[{n}/{len(tasks)}] {iid} {v}: t_end {summ['t_end']:.0f} s, "
-                  f"dead {summ['plant_dead']}, first_out {len(summ['first_out'])}, "
-                  f"wall {summ['wall_s']:.0f} s", flush=True)
-            sys.stdout.flush()
+    for variant in VARIANTS:                       # faulted first: twins need its actions
+        tasks = [(it.to_json(), variant, str(cache_dir), until) for it in items]
+        with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
+                                 mp_context=get_context("spawn")) as ex:
+            futures = [ex.submit(_task, a) for a in tasks]
+            for n, fut in enumerate(as_completed(futures), 1):
+                iid, v, summ = fut.result()
+                out[(iid, v)] = summ
+                print(f"[{variant} {n}/{len(tasks)}] {iid}: t_end {summ['t_end']:.0f} s, "
+                      f"dead {summ['plant_dead']}, first_out {len(summ['first_out'])}, "
+                      f"wall {summ['wall_s']:.0f} s", flush=True)
+                sys.stdout.flush()
     return out

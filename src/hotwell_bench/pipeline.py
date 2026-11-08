@@ -125,7 +125,7 @@ def summarize(results: dict[int, dict]) -> str:
         f = r["item"]["fault"]
         by_cat["none" if f is None else f["category"]].append(r)
     lines.append(f"{'category':30s} {'n':>3s} {'acc':>4s} {'excl':>4s} {'attempts':>18s} "
-                 f"{'unobs.att':>9s} {'easy':>4s} {'opmed':>5s} {'conf':>4s} "
+                 f"{'unobs.att':>9s} {'easy':>4s} {'conf':>4s} "
                  f"{'delay p50/p90 [s]':>18s}")
     for cat in sorted(by_cat):
         rs = by_cat[cat]
@@ -135,14 +135,13 @@ def summarize(results: dict[int, dict]) -> str:
         unobs = sum(1 for r in rs for a in r["attempts"] if a["observable"] is False)
         tot = sum(len(r["attempts"]) for r in rs if r["status"] != "null")
         easy = sum(r["label"]["easy"] for r in acc)
-        opm = sum(r["label"]["operator_mediated"] for r in acc)
         nconf = sum(any(c["confusable"] for c in r["confusers"]) for r in acc)
         delays = sorted(r["label"]["t_det"] - r["label"]["t_inj"] for r in acc)
         pct = (f"{delays[len(delays) // 2]}/{delays[min(len(delays) - 1, int(0.9 * len(delays)))]}"
                if delays else "-")
         lines.append(f"{cat:30s} {len(rs):3d} {len(acc):4d} {len(excl):4d} "
                      f"{str(dict(sorted(att.items()))):>18s} "
-                     f"{(f'{unobs}/{tot}' if tot else '-'):>9s} {easy:4d} {opm:5d} {nconf:4d} "
+                     f"{(f'{unobs}/{tot}' if tot else '-'):>9s} {easy:4d} {nconf:4d} "
                      f"{pct:>18s}")
     rules = Counter(r["label"]["rule"] for r in results.values() if r["status"] == "accepted")
     lines.append(f"t_det rule shares (accepted): {dict(rules)}")

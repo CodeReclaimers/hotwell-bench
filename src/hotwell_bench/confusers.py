@@ -7,8 +7,10 @@ signature. If no labelling rule (label.evidence) can then tell the confuser's
 run from the primary's, the confuser is accepted as an equally correct answer.
 
 Mechanics:
-- Twin snapshot: the item's twin is driven to just before onset (t_inj − 1 s)
-  and snapshotted (run.Drive.snapshot, exact). Every trial branches from that
+- Twin snapshot: the item's twin, which replays the primary's recorded operator
+  actions, is driven to just before onset (t_inj − 1 s) and snapshotted
+  (run.Drive.snapshot, exact). Branches inherit the replay, so every confuser
+  run sees exactly the primary's operator actions. Every trial branches from that
   snapshot with a scenario that contains the confuser's event, built and
   validated through the normal builder.
 - Signature: over a fit window starting SETTLE_S after the primary's ramp ends
@@ -182,9 +184,9 @@ def _valid(c: Candidate, dev: float) -> bool:
 class _Brancher:
     """Twin snapshot at t_inj − 1 s and branch runs with a given confuser fault."""
 
-    def __init__(self, item: ItemRecord):
+    def __init__(self, item: ItemRecord, actions: list):
         self.item = item
-        twin = Drive(build(item), "twin")
+        twin = Drive(build(item), "twin", replay=actions)
         twin.advance(item.fault.t_inj - 1.0)
         self.snap = twin
 
@@ -213,7 +215,7 @@ def check_item(item: ItemRecord, fa: RunResult, tw: RunResult) -> list[ConfuserR
              if t is not None and w0 < t < w1]
     if swaps and min(swaps) - w0 >= MIN_FIT_WINDOW_S:
         w1 = float(min(swaps))
-    br = _Brancher(item)
+    br = _Brancher(item, fa.actions)
     results = []
     for c in cands:
         cat, comp = _category(c.mechanism, c.target)

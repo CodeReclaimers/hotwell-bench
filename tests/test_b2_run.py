@@ -37,11 +37,15 @@ def test_capture_is_one_row_per_second_in_spec_order():
 
 
 def test_null_item_twin_is_identical():
+    """The twin replays the faulted run's actions (no operator of its own), so for a
+    fault-free item it reproduces the faulted run exactly; its shift log is empty."""
     b = build(_item())
-    a, t = run_built(b, "faulted", until=180), run_built(b, "twin", until=180)
+    a = run_built(b, "faulted", until=180)
+    t = run_built(b, "twin", until=180, faulted=a)
     assert np.array_equal(a.values, t.values)
-    assert a.events == t.events and a.shift_log == t.shift_log
+    assert a.events == t.events and a.actions == t.actions
     assert a.summary["state_hash"] == t.summary["state_hash"]
+    assert t.shift_log == [] and t.summary["replay"]
 
 
 def test_twins_agree_before_onset_and_diverge_after():
@@ -155,15 +159,41 @@ def test_event_injected_into_a_branch_equals_a_run_with_it_from_the_start():
     ev = ScenarioEvent(80.0, "pump_degrade", {"target": "cp1", "head_factor": 0.98})
     sc = dataclasses.replace(b.twin, events=tuple(sorted(b.twin.events + (ev,),
                                                          key=lambda e: e.t)))
-    ref = Drive(b, "twin")
+    ref = Drive(b, "twin", replay=[])
     ref.sim.scenario = sc                     # swapped at t = 0
     ref.advance(150)
-    base = Drive(b, "twin")
+    base = Drive(b, "twin", replay=[])
     base.advance(60)
     br = base.snapshot()
     br.sim.scenario = sc                      # swapped at t = 60, before the event
     br.advance(150)
-    plain = Drive(b, "twin")
+    plain = Drive(b, "twin", replay=[])
     plain.advance(150)
     assert br.sim.state_history_hash == ref.sim.state_history_hash
     assert br.sim.state_history_hash != plain.sim.state_history_hash
+
+
+def test_replaying_a_runs_own_actions_reproduces_it_bit_identically():
+    """The replay mechanism is exact: driving the faulted scenario open-loop with the
+    actions its closed-loop run recorded gives the same run (hashes, data, events)."""
+    from hotwell_bench.run import Drive
+    b = build(_item(fault=FP1_DEGRADE, cp_swap=40))
+    closed = run_built(b, "faulted", until=400)
+    rep = Drive(b, "faulted", replay=closed.actions)
+    rep.advance(400)
+    r = rep.result()
+    print(f"\n{len(closed.actions)} recorded action ticks; closed "
+          f"{closed.summary['state_hash'][:16]}… replay {r.summary['state_hash'][:16]}…")
+    assert len(closed.actions) > 0
+    assert r.summary["state_hash"] == closed.summary["state_hash"]
+    assert r.summary["observation_hash"] == closed.summary["observation_hash"]
+    assert np.array_equal(r.values, closed.values) and r.events == closed.events
+
+
+def test_twin_sees_exactly_the_faulted_runs_actions():
+    """Plan 4.4: no operator divergence by construction."""
+    b = build(_item(fault=FP1_DEGRADE, cp_swap=40))
+    a = run_built(b, "faulted", until=400)
+    t = run_built(b, "twin", faulted=a)
+    assert t.actions == a.actions
+    assert t.summary["t_end"] == a.summary["t_end"]
