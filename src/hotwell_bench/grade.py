@@ -140,10 +140,13 @@ def _ratio_bucket(r) -> str:
 
 def strata(key: dict) -> dict[str, str]:
     if not key["fault_present"]:
-        return {"category": NULL_CATEGORY, "ratio": "null", "shape": "null", "easy": "null"}
+        return {"category": NULL_CATEGORY, "ratio": "null", "shape": "null", "easy": "null",
+                "sensor_kind": "null"}
     s = key["strata"]
     return {"category": s["category"], "ratio": _ratio_bucket(s["ratio"]),
-            "shape": s["shape"], "easy": "easy" if key["easy"] else "not easy"}
+            "shape": s["shape"], "easy": "easy" if key["easy"] else "not easy",
+            # instrument faults only; "n/a" for every other fault category
+            "sensor_kind": s.get("sensor_kind") or "n/a"}
 
 
 def summarize(keys: dict[str, dict], graded: list[dict]) -> dict:

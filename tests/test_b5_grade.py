@@ -78,3 +78,21 @@ def test_oracle_and_missing_answers():
     graded, s = grade(keys, {})
     print(f"\nall missing: {s['overall']}")
     assert s["overall"]["full"] == 0.0 and s["overall"]["invalid"] == 3
+
+
+def test_sensor_kind_stratum():
+    """Instrument faults are broken down by sensor kind; other faults land in "n/a"
+    and null items in "null"."""
+    k_bias = {**KEY_FAULT, "item_id": "dev-0004",
+              "accepted_answers": [{"category": "instrument_fault", "component": "da_level"}],
+              "strata": {"category": "instrument_fault", "shape": "step", "ratio": 2.0,
+                         "sensor_kind": "bias"}}
+    keys = {k["item_id"]: k for k in (KEY_FAULT, KEY_NULL, k_bias)}
+    answers = {i: oracle_answer(k) for i, k in keys.items()}
+    answers["dev-0004"] = ans("instrument_fault", "da_level", onset=None)
+    _, s = grade(keys, answers)
+    sk = s["strata"]["sensor_kind"]
+    print(f"\nsensor_kind strata: { {v: (d['n'], d['full']) for v, d in sk.items()} }")
+    assert set(sk) == {"bias", "n/a", "null"}
+    assert sk["bias"]["n"] == 1 and sk["bias"]["full"] == 0.0 and sk["bias"]["component"] == 1.0
+    assert sk["n/a"]["full"] == 1.0 and sk["null"]["full"] == 1.0
