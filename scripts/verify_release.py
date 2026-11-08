@@ -58,7 +58,7 @@ def main() -> int:
     ok = not (bad or extra or kbad)
     if a.regenerate:
         from hotwell_bench.items import ItemRecord
-        from hotwell_bench.package import item_files
+        from hotwell_bench.package import canary_text, item_files
         from hotwell_bench.provenance import check_environment
         from hotwell_bench.run import run_cached
         check_environment()
@@ -79,7 +79,7 @@ def main() -> int:
             h_ok = (r.summary["state_hash"] == exp["state_hash"]
                     and r.summary["observation_hash"] == exp["observation_hash"])
             f_ok = all(hashlib.sha256(b).hexdigest() == man["files"][f"items/{i}/{n}"]
-                       for n, b in item_files(r).items())
+                       for n, b in item_files(r, canary_text(man["canary"])).items())
             same += h_ok and f_ok
             print(f"  {i}: hashes {'agree' if h_ok else 'DIFFER'}, files "
                   f"{'agree' if f_ok else 'DIFFER'}", flush=True)

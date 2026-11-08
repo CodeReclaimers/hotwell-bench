@@ -349,8 +349,12 @@ are not regenerated there. Reasons:
   leaks. Generated once at B6 and recorded here. The B4 leak scan must allow it, and
   the packaging test must check it is present. Kept although nothing is published,
   because it is cheap. Drop it if unwanted.
-  **GUID (generated 2026-11-08, uuid4): `REDACTED-canary-guid`**
-  (`package.CANARY_GUID`).
+  GUID generated 2026-11-08 (uuid4). **It is a run-time input, kept with the release
+  outside git** (`/home/alan/hotwell-bench-release/CANARY_GUID`; `package_split.py
+  --canary-file`), like the test seed. Reason (Alan, 2026-11-08, before the repo went
+  public): a GUID published in the code can be learned from the code, so finding it in
+  a model's output would no longer show that the data leaked. The two local commits
+  that had it hard-coded were rewritten before the first push.
 
 **Steps:**
 1. Freeze the code (tag).

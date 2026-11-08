@@ -18,6 +18,9 @@ from hotwell_bench.secrecy import REPO_ROOT
 from hotwell_bench.taxonomy import FAULT_CATEGORIES
 
 UNTIL = 600
+#: a test-only GUID; the release GUID is a run-time input and never in git
+GUID = "00000000-0000-4000-8000-000000000000"
+CANARY = K.canary_text(GUID)
 PROV = {"environment": {"hotwell": {"requested_revision": "v0.4.0", "commit_id": "c0ffee"},
                         "numpy": "2.5.1"}, "platform": "test", "bench": {"commit": "beef"}}
 
@@ -48,13 +51,22 @@ def runs(tmp_path_factory):
 
 def _package(tmp: Path, runs) -> Path:
     results, rr, _ = runs
-    K.package_split("dev", results, rr, tmp, PROV)
+    K.package_split("dev", results, rr, tmp, PROV, GUID)
     return tmp / "dev"
 
 
 def _hashes(d: Path) -> dict[str, str]:
     return {str(p.relative_to(d)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(d.rglob("*")) if p.is_file()}
+
+
+def test_canary_guid_validation_and_wrong_guid_fails_the_scan(tmp_path, runs):
+    with pytest.raises(ValueError):
+        K.canary_text("not-a-guid")
+    d = _package(tmp_path / "g", runs)
+    problems = K.leak_scan(d, runs[2], "11111111-1111-4111-8111-111111111111")
+    print(f"\nwrong GUID: {len(problems)} problems, e.g. {problems[:2]}")
+    assert any("canary" in p for p in problems)
 
 
 def test_formats():
@@ -65,11 +77,11 @@ def test_formats():
 
 
 def test_task_statement_is_clean_and_complete():
-    t = K.task_md().decode()
+    t = K.task_md(CANARY).decode()
     hits = [m.group(0) for m in K._token_re(K.forbidden_tokens()).finditer(t)]
     print(f"\ntask.md {len(t)} chars; forbidden hits {hits}")
     assert not hits
-    assert K.CANARY in t.split("\n", 1)[0]
+    assert CANARY in t.split("\n", 1)[0]
     for c in FAULT_CATEGORIES:
         assert f"`{c}`" in t, c
 
@@ -79,7 +91,7 @@ def test_package_passes_scan_and_is_byte_identical(tmp_path, runs):
     directory reproduces every file byte for byte."""
     a = _package(tmp_path / "a", runs)
     b = _package(tmp_path / "b", runs)
-    problems = K.leak_scan(a, runs[2])
+    problems = K.leak_scan(a, runs[2], GUID)
     ha, hb = _hashes(a), _hashes(b)
     print(f"\nfiles {len(ha)}; scan problems {problems}")
     for k in sorted(ha):
@@ -155,7 +167,7 @@ def test_mutation_fails_the_scan(tmp_path, runs, name):
         p.write_text(p.read_text() + f"12:00:00.00,43200.00,alarm,FREQ_LO,{seed}\n")
     else:
         fn(d)
-    problems = K.leak_scan(d, runs[2])
+    problems = K.leak_scan(d, runs[2], GUID)
     print(f"\n{name}: {problems[:3]}")
     assert any(expect in p for p in problems), problems
 
@@ -163,4 +175,4 @@ def test_mutation_fails_the_scan(tmp_path, runs, name):
 def test_test_split_package_is_refused_inside_the_repository(runs):
     results, rr, _ = runs
     with pytest.raises(PermissionError):
-        K.package_split("test", results, rr, REPO_ROOT / "out" / "pkg", PROV)
+        K.package_split("test", results, rr, REPO_ROOT / "out" / "pkg", PROV, GUID)
