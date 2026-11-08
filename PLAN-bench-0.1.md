@@ -235,6 +235,24 @@ hashes.
 Byte-identical packaging is also required: re-packaging an item reproduces its
 file hashes.
 
+*As built (B4, 2026-11-08; `hotwell_bench.package`, `scripts/package_split.py`):*
+- Layout: `<split>/{README.md, task.md, manifest.json, manual/, items/<id>/, keys/}`.
+  Item files: `instruments.csv.gz`, `events.csv`, `shift_log.txt`, `task.md` (task.md
+  is the same for every item). `manifest.json` holds hashes only; answers, item records
+  and run hashes live in `keys/`.
+- instruments.csv: t = 1 … end of record. Row 0 (the noise-free initialization sample)
+  is dropped, so a full day has 86 400 rows. Values are written at the instrument's
+  resolution, and the packager parses them back and fails on any deviation. Over the
+  dev pilot every value was already on its grid.
+- The leak scan whitelists where it can: events (protection-table alarm ids, alarm
+  states, Observation indication keys), shift-log procedure ids, an exact CSV header
+  and a numeric CSV body. A blacklist (event, mechanism, parameter, truth-signal and
+  non-operator target names; every seed) covers the free text.
+- The manual (hotwell `docs/manual` at v0.4.0, verbatim plus the canary) ships per
+  split in `manual/`, for the with/without-manual condition.
+- `confidence` is defined in task.md as the probability that the whole answer is
+  correct (§6 left it open).
+
 ## 6. Grader and baselines (B5)
 
 Scoring, per item (B-Q2 settles the onset window):
@@ -331,6 +349,8 @@ are not regenerated there. Reasons:
   leaks. Generated once at B6 and recorded here. The B4 leak scan must allow it, and
   the packaging test must check it is present. Kept although nothing is published,
   because it is cheap. Drop it if unwanted.
+  **GUID (generated 2026-11-08, uuid4): `REDACTED-canary-guid`**
+  (`package.CANARY_GUID`).
 
 **Steps:**
 1. Freeze the code (tag).
