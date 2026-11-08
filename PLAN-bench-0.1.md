@@ -188,6 +188,19 @@ distinguishes it from the true fault beyond the same max(3σ, 2 LSB) / 10 s boun
 The alternative, hand-written per-item rules, is rejected: rules cover only the
 confusions someone thought of.
 
+### 4.4 B3 decisions after the pilot (Alan, 2026-11-08)
+
+- **Action-replay twins.** The twin and every confuser run are driven open-loop by the
+  faulted run's recorded operator actions (per tick). A difference then means the
+  plant responds differently to the same actions, which is what an observer with the
+  shift log can judge. This replaces the closed-loop twin, whose own operator
+  produced timing artifacts: 3 of 33 pilot acceptances came from trim timing alone.
+- **Dropped from 0.1 sampling:** makeup-valve faults (valve capacity loss and stuck
+  actuator; the valve is normally shut) and the actuator_sluggish category (load ramps
+  are too slow to reach slew limits). They hit the attempt cap 8 of 8 times in the
+  pilot. To revisit when the day design can reveal them (e.g. a makeup demand or a fast
+  load step).
+
 ## 5. Packaging (B4)
 
 Per item: `instruments.csv`, `events.csv`, `shift_log.txt`, `task.md`. Separately,
