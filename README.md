@@ -143,3 +143,52 @@ frontier, calibration, and time to a confident answer, rather than correctness a
 Stricter grading is also available without new data: a tighter onset window, no credit
 for the confusable alternative, and grading the instrument-fault kind (which needs one
 more answer field).
+
+**5. Other plant variants: a pluggable heat source.** Instead of replacing the fossil
+boiler, make the heat source a component behind a clean interface to the steam side,
+with the boiler as the default. 0.1 then stays reproducible and comparable across model
+generations. A new source becomes a second plant variant, not a rewrite: the steam
+side, the condensate and feed train, the noise model, the historian and most of this
+repository's tooling carry over. The interface is a change to `hotwell`, made there as
+its own task. Two coupling styles need to fit behind it: heat released directly into the
+drum (fired boiler), and a hot fluid stream through an exchanger (reactor coolant,
+turbine exhaust, molten salt).
+
+- *Sodium-cooled fast reactor.* Its main value is that models know much less about it
+  than about fossil boilers, so they have to reason from the manual and first
+  principles rather than recognise familiar fault signatures.
+  - Unusual dynamics: delayed-neutron kinetics; reactivity feedbacks (Doppler, sodium
+    density, thermal expansion) with interacting signs and time constants; pump
+    coastdown into natural circulation.
+  - Fault families with no boiler equivalent: sodium–water reaction in the steam
+    generator, intermediate heat exchanger fouling, subassembly flow blockage,
+    control-rod drift, fuel cladding failure.
+  - A three-loop plant (primary sodium, intermediate sodium, water/steam), so heat-
+    transport delays make onset harder to place.
+  - Costs: the kinetics are too stiff for a fixed-step explicit integrator, so they need
+    an implicit method or the prompt-jump approximation, within the determinism
+    contract. Validation needs published transient benchmarks (for example the EBR-II
+    shutdown heat removal tests). The manual, taxonomy, detectability sweeps and
+    look-alike pairs are all new. Some fast reactors paired sodium-heated evaporators
+    with a steam drum; check that against a specific reference plant before relying on
+    it.
+  - This variant pays off most in live operation, where reactivity feedback makes
+    control actions matter. It belongs after the harder offline items and streaming
+    detection.
+- *Gas turbine with a heat-recovery steam generator (combined cycle).*
+  - Exhaust flow and temperature follow turbine load and ambient temperature, which gives
+    realistic benign variability, a natural source of decoys for fault-free days.
+  - Turbine faults: compressor fouling, hot-section degradation.
+  - Supplementary firing as a second, independent heat input.
+  - A turbine trip removes heat in seconds.
+  - Well documented, so it adds coupling rather than unfamiliarity.
+- *Cogeneration.* Process-steam export is a property of the steam side, not of the heat
+  source, and could pair with any source. It adds a second demand (electricity against
+  process steam). In live operation the agent then has to trade one off against the
+  other.
+- *Solar thermal with molten-salt storage.* Cloud transients are a benign disturbance,
+  and a storage inventory sets the operating margin.
+- *Geothermal flash.* No boiler. Non-condensable gases from the well load the condenser,
+  which makes the existing condenser-vacuum faults harder to tell apart.
+- *Other reactor types* (gas-cooled, molten salt). These are unfamiliar to models in the
+  same way as the fast reactor, and share most of its costs.
