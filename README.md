@@ -95,3 +95,51 @@ packaged at `v0.1.0`; the files are distributed directly, not from this reposito
 Test was sampled at 200; one item (an instrument fault on `makeup_flow`) stayed
 unobservable through the attempt cap and is excluded. Plan: `PLAN-bench-0.1.md`.
 Progress logs: `progress-*.md`.
+
+## Future directions
+
+Candidate scope for later versions; none of this is planned or approved yet. Early
+results on 0.1 suggest frontier models lose little once they have the whole day of data
+in front of them. The ideas below target that, roughly from cheapest to largest.
+
+**1. Harder offline items** (same format as 0.1):
+- Ramped onsets and magnitudes near the detectability limit. 0.1 sizes faults at
+  0.5–4× a per-sample threshold, but an analyst who averages over a window gains
+  roughly √N; the twin-run difference, judged with a windowed rule, keeps every item
+  solvable.
+- More fault-free days with convincing decoys: an operator step change, or a nuisance
+  alarm that coincides with a real-looking drift. These test whether a model can say
+  "nothing here."
+- Zero, one or two faults per item, with the model required to say how many (0.1
+  assumes at most one; plan §9).
+- A misleading shift log: an operator compensates by hand for a degrading pump and logs
+  it as routine, so the telemetry contradicts the log.
+- A misleading instrument paired with a real fault: a biased sensor that masks or mimics
+  a physical fault, so the model has to decide which evidence to trust.
+- Before treating an item that every model misses as hard, check that a reference
+  solver can find it; otherwise it is an item defect.
+
+**2. Streaming detection.** Feed the day in chunks (for example an hour at a time) and
+require an alarm as early as the model is confident. Score detection delay against
+false alarms. This reuses the 0.1 items and ground truth; the onset tolerance becomes a
+delay metric.
+
+**3. Live operation.** The model operates the plant through a fault instead of reading
+a finished record.
+- Time pressure in simulated time, not wall-clock time: the simulation advances a fixed
+  amount per tool call or per output token, so pressure is reproducible and the same for
+  every model, and does not measure API latency.
+- Outcomes are scored first (energy delivered, limit violations judged on true rather
+  than sensed values, trips avoided); diagnosis is secondary.
+- Information costs operating margin: diagnostic probes such as manual valve steps or
+  load changes use it up, and the drum's inverse response (shrink and swell) makes the
+  obvious probe dangerous.
+- Grading by open-loop replay of the agent's logged actions against every fault
+  hypothesis gives the set of faults that were genuinely indistinguishable; a scripted
+  reference policy shows which cases are solvable at all.
+
+**4. What is scored** (possible on 0.1 data now): accuracy against tokens used as a
+frontier, calibration, and time to a confident answer, rather than correctness alone.
+Stricter grading is also available without new data: a tighter onset window, no credit
+for the confusable alternative, and grading the instrument-fault kind (which needs one
+more answer field).
