@@ -36,6 +36,7 @@ repository.
 | Verify | `scripts/verify_release.py DIR/<split> [--regenerate N]` | integrity vs manifest; optional re-simulation of N items |
 | Grade | `scripts/grade.py --keys DIR/<split>/keys --answers ANS [--out graded.json]` | report table; per-item JSON |
 | Baselines / G-B5 | `scripts/baselines.py --keys DIR/<split>/keys` | oracle, always-none, prior, shuffled-keys |
+| CUSUM baseline | `scripts/cusum_baseline.py --train DIR/dev --eval DIR/<split> --out ANS` | non-LLM change detector (plan §6): one answer per item, graded with `grade.py` |
 
 **A packaged split:**
 ```
@@ -75,7 +76,14 @@ answer scores 0 and is counted as invalid.
 - each score stratified by category, magnitude/threshold, step vs ramp, and easy
   (the fault tripped the plant).
 
-**Not yet provided:** the CUSUM change-detector baseline (plan §6).
+**CUSUM baseline** (`src/hotwell_bench/cusum.py`): per-feature CUSUM on load-normalized
+1-minute residuals, trained on dev (fault-free statistics from null days and the
+pre-fault part of fault days), category from the nearest dev training signature.
+On the 0.1 test split it scores 0.683 fully correct (detection 0.994 on fault items;
+8 of 39 fault-free days raise a false alarm). By the plan's own criterion (§6: if the
+change detector solves most items, the set is too easy), most of 0.1 is solvable by
+change detection plus signature lookup; instrument faults and stuck actuators are
+where it fails.
 
 ## License
 
