@@ -19,6 +19,15 @@ The last two exist because the level rule structurally cannot see faults that
 change variance rather than level (plan §4.1, B2 finding). t_det is the earliest
 evidence over all rules and instruments.
 
+- window   (presets with window_* set; PLAN-bench-0.2.md §2.1) the trailing
+           `window_s`-sample mean of (F − T) exceeds θ_i (`window_thresholds`) in
+           magnitude for `window_sustain_s` consecutive samples. It reports the end
+           of the first exceeding window, so the evidence is causal. θ_i comes from
+           seed-pair null days (scripts/null_pairs.py, scripts/window_thresholds.py):
+           the level an analyst averaging over W must see to tell a fault from
+           day-to-day variability, far below the per-sample bound D_i for slow
+           faults.
+
 The constants in backticks are fields of the generation preset (presets.Preset),
 passed explicitly to every rule.
 
@@ -47,7 +56,13 @@ from hotwell_bench.items import ItemRecord, detection_scale
 from hotwell_bench.presets import Preset
 from hotwell_bench.run import COLUMNS, RunResult
 
-RULES = ("level", "stuck", "variance")
+BASE_RULES = ("level", "stuck", "variance")
+
+
+def rules(preset: Preset) -> tuple[str, ...]:
+    """The rules a preset labels with. Presets without a window rule label exactly as
+    0.1 did (no "window" key anywhere, so P01 label files are unchanged)."""
+    return BASE_RULES + (("window",) if preset.window_s is not None else ())
 SCALE = np.array([detection_scale(c) for c in COLUMNS])
 
 
@@ -63,6 +78,24 @@ def _first_run_start(flag: np.ndarray, length: int) -> int | None:
 def level_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
     over = np.abs(F - T) > SCALE
     return [_first_run_start(over[:, i], preset.level_run) for i in range(F.shape[1])]
+
+
+def trailing_mean(x: np.ndarray, w: int) -> np.ndarray:
+    """Trailing w-sample mean along axis 0; row j covers x rows j … j+w−1, i.e. the
+    window ENDING at sample j+w−1 (only full windows)."""
+    c = np.concatenate([np.zeros((1,) + x.shape[1:]), np.cumsum(x, axis=0)])
+    return (c[w:] - c[:-w]) / w
+
+
+def window_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
+    w, s = preset.window_s, preset.window_sustain_s
+    theta = np.array([preset.window_thresholds[c] for c in COLUMNS])
+    over = np.abs(trailing_mean(F - T, w)) > theta
+    out: list[int | None] = []
+    for i in range(F.shape[1]):
+        j = _first_run_start(over[:, i], s)
+        out.append(None if j is None else j + w - 1)
+    return out
 
 
 def _runs(col: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -130,8 +163,11 @@ def evidence(F: np.ndarray, T: np.ndarray, *, preset: Preset) -> dict[str, list[
     neq = F != T
     first_div = [int(np.argmax(neq[:, i])) if neq[:, i].any() else None
                  for i in range(F.shape[1])]
-    return {"level": level_rule(F, T, preset), "stuck": stuck_rule(F, T, first_div, preset),
-            "variance": variance_rule(F, T, preset), "first_divergence": first_div}
+    ev = {"level": level_rule(F, T, preset), "stuck": stuck_rule(F, T, first_div, preset),
+          "variance": variance_rule(F, T, preset), "first_divergence": first_div}
+    if "window" in rules(preset):
+        ev["window"] = window_rule(F, T, preset)
+    return ev
 
 
 @dataclass
@@ -159,8 +195,8 @@ class Label:
 def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult, *, preset: Preset) -> Label:
     ev = evidence(fa.values, tw.values, preset=preset)
     per_rule = {r: {COLUMNS[i]: t for i, t in enumerate(ev[r]) if t is not None}
-                for r in RULES}
-    cands = [(t, r, inst) for r in RULES for inst, t in per_rule[r].items()]
+                for r in rules(preset)}
+    cands = [(t, r, inst) for r in rules(preset) for inst, t in per_rule[r].items()]
     divs = [t for t in ev["first_divergence"] if t is not None]
     t_det, rule, inst = min(cands) if cands else (None, None, None)
     twin_out = {tuple(x) for x in tw.summary["first_out"]}

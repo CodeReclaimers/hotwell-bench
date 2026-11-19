@@ -39,7 +39,7 @@ import numpy as np
 
 from hotwell_bench.build import build
 from hotwell_bench.items import Fault, ItemRecord, detection_scale
-from hotwell_bench.label import evidence
+from hotwell_bench.label import evidence, rules
 from hotwell_bench.presets import Preset
 from hotwell_bench.run import COLUMNS, Drive, RunResult
 from hotwell_bench.taxonomy import CATEGORIES
@@ -274,7 +274,7 @@ def check_item(item: ItemRecord, fa: RunResult, tw: RunResult, *,
         same_end = (len(cr.t) == len(fa.t)) and (cr.summary["plant_dead"]
                                                   == fa.summary["plant_dead"])
         ev = evidence(cr.values, fa.values, preset=preset)
-        hits = [(t, r, COLUMNS[i]) for r in ("level", "stuck", "variance")
+        hits = [(t, r, COLUMNS[i]) for r in rules(preset)
                 for i, t in enumerate(ev[r]) if t is not None]
         sep = min(hits) if hits else None
         confusable = same_end and sep is None

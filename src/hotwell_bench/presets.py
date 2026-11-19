@@ -119,6 +119,12 @@ class Preset:
     stuck_margin: int
     var_lo: float
     var_hi: float
+    #: windowed level rule (PLAN-bench-0.2.md §2.1); all three None disables it.
+    #: window_s: trailing-mean window W [samples = s]; window_sustain_s: S;
+    #: window_thresholds: θ_i per instrument, in instrument units.
+    window_s: int | None = None
+    window_sustain_s: int | None = None
+    window_thresholds: Mapping[str, float] | None = None
 
 
 #: Step detectability thresholds, AB + 3E column of hotwell
@@ -183,3 +189,5 @@ PRESETS: Mapping[str, Preset] = MappingProxyType({P01.name: P01})
 
 for _p in PRESETS.values():
     assert _p.sensor_kinds and set(_p.sensor_kinds) <= set(SENSOR_KINDS), _p.name
+    _w = (_p.window_s, _p.window_sustain_s, _p.window_thresholds)
+    assert all(x is None for x in _w) or all(x is not None for x in _w), _p.name
