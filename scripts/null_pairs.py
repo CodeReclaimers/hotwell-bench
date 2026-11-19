@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 
 from hotwell_bench.items import ItemRecord, sample_item
+from hotwell_bench.label import trailing_mean
 from hotwell_bench.presets import P01
 from hotwell_bench.provenance import check_environment
 from hotwell_bench.run import COLUMNS, _task, run_cached
@@ -72,12 +73,6 @@ def parse_range(s: str) -> list[int]:
     return out
 
 
-def trailing_mean(x: np.ndarray, w: int) -> np.ndarray:
-    """Trailing w-sample mean along axis 0; row j covers rows j−w+1 … j (rows ≥ w−1 only)."""
-    c = np.concatenate([np.zeros((1,) + x.shape[1:]), np.cumsum(x, axis=0)])
-    return (c[w:] - c[:-w]) / w
-
-
 def pair_stats(a: np.ndarray, b: np.ndarray) -> dict:
     n = min(len(a), len(b))
     d = a[:n] - b[:n]
@@ -85,7 +80,7 @@ def pair_stats(a: np.ndarray, b: np.ndarray) -> dict:
     for w in WINDOWS_S:
         m = np.abs(trailing_mean(d, w))
         sus = np.lib.stride_tricks.sliding_window_view(m, SUSTAIN_S, axis=0).min(axis=-1)
-        med = np.median(m, axis=0)       # |m| is folded; MAD of signed m below
+        med = np.median(m, axis=0)
         sm = trailing_mean(d, w)
         mad = 1.4826 * np.median(np.abs(sm - np.median(sm, axis=0)), axis=0)
         out[str(w)] = {"M": dict(zip(COLUMNS, map(float, sus.max(axis=0)), strict=True)),
