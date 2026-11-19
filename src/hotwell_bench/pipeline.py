@@ -8,11 +8,14 @@ recorded as `excluded_at_cap`, not filled. How to fill a split is decided when i
 is frozen (B6). Accepted fault items then get the confuser check. Fault-free
 items are labelled once.
 
-Phases (so simulations parallelize across items):
-1. run attempt a for every pending index;
-2. label;
-3. carry the unobservable ones to attempt a + 1;
-4. run confuser checks for accepted items in a process pool.
+Scheduling (per-item pipelining, PLAN-bench-0.2.md §4). One process pool runs every
+simulation, and each item advances as soon as its own previous step finishes:
+faulted run → twin run → label (in this process) → either the next attempt's faulted
+run, or the confuser check for an accepted item, or done. 0.1 ran barrier-synchronized
+rounds (every attempt-a run, then every label, then attempt a + 1, confusers last), which
+left cores idle while the slowest item of a round finished. Results do not depend on the
+schedule: each index's attempts are still sequential, and every run is a pure function
+of its item record.
 
 One JSON per index is written to `out_dir` (secrecy-checked for the test split):
 item record, label, attempt history, confuser results, accepted answers.
@@ -21,7 +24,8 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -29,7 +33,7 @@ from hotwell_bench.confusers import candidates, check_item
 from hotwell_bench.items import ItemRecord, sample_item
 from hotwell_bench.label import label_runs
 from hotwell_bench.presets import PRESETS, Preset
-from hotwell_bench.run import run_cached, run_items
+from hotwell_bench.run import _task, run_cached
 from hotwell_bench.secrecy import check_output_path
 
 ATTEMPT_CAP = 5
@@ -53,7 +57,7 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
                   preset: Preset) -> dict[int, dict]:
     """Generate and label `indices` under `preset` (one of presets.PRESETS, by name,
     so worker processes can look it up). `until` shortens every run (tests only;
-    real items run the full day)."""
+    real items run the full day). Returns {index: result}, sorted by index."""
     if PRESETS.get(preset.name) is not preset:
         raise ValueError(f"preset {preset.name!r} is not registered in presets.PRESETS")
     out = check_output_path(out_dir, split)
@@ -62,22 +66,21 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
     workers = workers or max(1, (os.cpu_count() or 2) - 2)
     results: dict[int, dict] = {}
     history: dict[int, list] = {i: [] for i in indices}
-    pending = list(indices)
-    accepted: dict[int, tuple] = {}
-    for attempt in range(cap):
-        if not pending:
-            break
-        items = {i: sample_item(master, split, i, attempt, preset=preset) for i in pending}
-        if attempt > 0:
-            items = {i: it for i, it in items.items() if it.fault is not None}
-        print(f"== attempt {attempt}: {len(items)} items", flush=True)
-        run_items(list(items.values()), cache_dir, workers=workers, until=until)
-        nxt = []
-        for i, it in items.items():
+    counts = {"faulted": 0, "twin": 0, "confusers": 0}
+    t0 = time.time()
+
+    with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as ex:
+        running: dict[Future, tuple] = {}
+
+        def submit_run(i: int, it: ItemRecord, variant: str) -> None:
+            fut = ex.submit(_task, (it.to_json(), variant, str(cache_dir), until))
+            running[fut] = ("run", i, it, variant)
+
+        def on_labelled(i: int, it: ItemRecord) -> None:
             fa = run_cached(it, "faulted", cache_dir, until)
             tw = run_cached(it, "twin", cache_dir, until)
             lab = label_runs(it, fa, tw, preset=preset)
-            history[i].append({"attempt": attempt, "observable": lab.observable,
+            history[i].append({"attempt": it.attempt, "observable": lab.observable,
                                "t_det": lab.t_det, "rule": lab.rule,
                                "instrument": lab.instrument})
             if it.fault is None:
@@ -86,41 +89,62 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
                               "confusers": [],
                               "accepted_answers": [_answer("none", None)]}
             elif lab.observable:
-                accepted[i] = (it, lab)
+                if candidates(it, fa):
+                    fut = ex.submit(_confuser_task, (i, it.to_json(), str(cache_dir), until,
+                                                     preset.name))
+                    running[fut] = ("confusers", i, it, lab)
+                else:
+                    _accept(results, i, it, lab, history[i], [])
+            elif it.attempt + 1 < cap:
+                nxt = sample_item(master, split, i, it.attempt + 1, preset=preset)
+                assert nxt.fault is not None    # null-ness comes from the STRUCTURE stream
+                submit_run(i, nxt, "faulted")
             else:
-                nxt.append(i)
-        pending = nxt
-    for i in pending:
-        it = sample_item(master, split, i, 0, preset=preset)
-        results[i] = {"status": "excluded_at_cap", "item": json.loads(it.to_json()),
-                      "label": None, "attempts": history[i], "confusers": [],
-                      "accepted_answers": []}
-    conf: dict[int, list] = {i: [] for i in accepted}
-    tasks = [(i, it.to_json(), str(cache_dir), until, preset.name)
-             for i, (it, _) in accepted.items()
-             if candidates(it, run_cached(it, "faulted", cache_dir, until))]
-    if tasks:
-        print(f"== confusers: {len(tasks)} items", flush=True)
-        with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
-                                 mp_context=get_context("spawn")) as ex:
-            futs = [ex.submit(_confuser_task, t) for t in tasks]
-            for n, fut in enumerate(as_completed(futs), 1):
-                i, res = fut.result()
-                conf[i] = res
-                print(f"  [{n}/{len(tasks)}] index {i}: "
-                      + ", ".join(f"{r['category']}/{r['component']} "
-                                  f"{'CONFUSABLE' if r['confusable'] else r['reason']}"
-                                  for r in res), flush=True)
-    for i, (it, lab) in accepted.items():
-        f = it.fault
-        answers = [_answer(f.category, f.component)] + [
-            _answer(r["category"], r["component"]) for r in conf[i] if r["confusable"]]
-        results[i] = {"status": "accepted", "item": json.loads(it.to_json()),
-                      "label": lab.to_dict(), "attempts": history[i],
-                      "confusers": conf[i], "accepted_answers": answers}
+                it0 = sample_item(master, split, i, 0, preset=preset)
+                results[i] = {"status": "excluded_at_cap", "item": json.loads(it0.to_json()),
+                              "label": None, "attempts": history[i], "confusers": [],
+                              "accepted_answers": []}
+
+        for i in indices:
+            submit_run(i, sample_item(master, split, i, 0, preset=preset), "faulted")
+        while running:
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for fut in done:
+                kind, i, it, x = running.pop(fut)
+                if kind == "run":
+                    iid, variant, summ = fut.result()
+                    counts[variant] += 1
+                    print(f"[{time.time() - t0:6.0f} s] {iid} a{it.attempt} {variant}: "
+                          f"t_end {summ['t_end']:.0f} s, dead {summ['plant_dead']}, "
+                          f"first_out {len(summ['first_out'])}, wall {summ['wall_s']:.0f} s",
+                          flush=True)
+                    if variant == "faulted":
+                        submit_run(i, it, "twin")
+                    else:
+                        on_labelled(i, it)
+                else:
+                    _, res = fut.result()
+                    counts["confusers"] += 1
+                    print(f"[{time.time() - t0:6.0f} s] confusers {it.item_id}: "
+                          + ", ".join(f"{r['category']}/{r['component']} "
+                                      f"{'CONFUSABLE' if r['confusable'] else r['reason']}"
+                                      for r in res), flush=True)
+                    _accept(results, i, it, x, history[i], res)
+    print(f"== done in {time.time() - t0:.0f} s: {counts['faulted']} faulted runs, "
+          f"{counts['twin']} twin runs, {counts['confusers']} confuser checks", flush=True)
+    results = dict(sorted(results.items()))
     for i, r in results.items():
         (out / f"{split}-{i:04d}.json").write_text(json.dumps(r, sort_keys=True, indent=1))
     return results
+
+
+def _accept(results: dict, i: int, it: ItemRecord, lab, attempts: list, conf: list) -> None:
+    f = it.fault
+    answers = [_answer(f.category, f.component)] + [
+        _answer(r["category"], r["component"]) for r in conf if r["confusable"]]
+    results[i] = {"status": "accepted", "item": json.loads(it.to_json()),
+                  "label": lab.to_dict(), "attempts": attempts,
+                  "confusers": conf, "accepted_answers": answers}
 
 
 def summarize(results: dict[int, dict]) -> str:
