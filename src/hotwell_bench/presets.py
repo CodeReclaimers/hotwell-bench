@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from hotwell_bench.taxonomy import SENSOR_KINDS
+
 #: hotwell scripts/quiet_day.py::QUIET_DAY_SENSOR_NOISE at v0.4.0 (5f57636), verbatim.
 #: sigma in instrument units; tau [s] (0 = white).
 SENSOR_NOISE = {
@@ -105,6 +107,9 @@ class Preset:
     sensor_drift_time_s: tuple[float, float]  # time to reach the final bias, log-uniform
     sensor_lag_tau_s: tuple[float, float]    # log-uniform
     sensor_noise_factor: tuple[float, float]  # log-uniform
+    #: sensor fault kinds sampled for instrument_fault, uniformly (a subset of
+    #: taxonomy.SENSOR_KINDS)
+    sensor_kinds: tuple[str, ...]
 
     # labeller (label.py describes the rules)
     level_run: int
@@ -164,6 +169,7 @@ P01 = Preset(
     sensor_drift_time_s=(600.0, 6 * 3600.0),
     sensor_lag_tau_s=(5.0, 300.0),
     sensor_noise_factor=(2.0, 10.0),
+    sensor_kinds=("bias", "drift", "stuck", "lag", "noise_increase"),
     level_run=10,
     var_window=600,
     var_sustain=60,
@@ -174,3 +180,6 @@ P01 = Preset(
 )
 
 PRESETS: Mapping[str, Preset] = MappingProxyType({P01.name: P01})
+
+for _p in PRESETS.values():
+    assert _p.sensor_kinds and set(_p.sensor_kinds) <= set(SENSOR_KINDS), _p.name

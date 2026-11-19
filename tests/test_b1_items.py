@@ -24,7 +24,6 @@ from hotwell_bench.taxonomy import (
     EXCLUDED_COMPONENTS,
     FAULT_CATEGORIES,
     SAMPLED_CATEGORIES,
-    SENSOR_KINDS,
     SENSOR_MECHANISM,
 )
 
@@ -159,8 +158,8 @@ def test_sampled_distributions_match_the_plan():
     assert _binom_ok(sum(ramp), len(ramp), P01.p_ramp)
     for c in SAMPLED_CATEGORIES:
         assert _binom_ok(cats[c], len(faults), 1 / len(SAMPLED_CATEGORIES)), c
-    for k in SENSOR_KINDS:
-        assert _binom_ok(kinds[k], sum(kinds.values()), 1 / len(SENSOR_KINDS)), k
+    for k in P01.sensor_kinds:
+        assert _binom_ok(kinds[k], sum(kinds.values()), 1 / len(P01.sensor_kinds)), k
 
     lo, hi = P01.mag_range
     for it in items:

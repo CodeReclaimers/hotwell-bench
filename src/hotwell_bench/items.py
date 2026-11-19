@@ -35,7 +35,6 @@ from hotwell_bench.taxonomy import (
     CATEGORIES,
     NULL_CATEGORY,
     SAMPLED_CATEGORIES,
-    SENSOR_KINDS,
     SENSOR_MECHANISM,
     plantwide,
     sampled_components,
@@ -232,7 +231,8 @@ def _sample_fault(g: np.random.Generator, category: str, component: str,
         return Fault(**common, shape="step", params={})
 
     assert mechanism == SENSOR_MECHANISM
-    kind = SENSOR_KINDS[min(int(u[5] * len(SENSOR_KINDS)), len(SENSOR_KINDS) - 1)]
+    kinds = preset.sensor_kinds
+    kind = kinds[min(int(u[5] * len(kinds)), len(kinds) - 1)]
     d_i = detection_scale(target)
     sign = 1.0 if u[6] < 0.5 else -1.0
     if kind == "bias":
