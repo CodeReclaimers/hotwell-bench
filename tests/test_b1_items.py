@@ -17,6 +17,7 @@ from hotwell_bench.items import (
     detection_scale,
     sample_item,
 )
+from hotwell_bench.presets import P01
 from hotwell_bench.taxonomy import (
     CATEGORIES,
     EXCLUDED_CATEGORIES,
@@ -55,7 +56,7 @@ def test_taxonomy_is_closed_against_hotwell():
     for mech in ("pump_degrade", "valve_degrade", "firing_degrade", "condenser_fouling",
                  "tube_leak"):
         for t in _allowed_targets(mech):
-            assert (mech, t) in P.THRESHOLDS, (mech, t)
+            assert (mech, t) in P01.thresholds, (mech, t)
 
 
 def test_answer_vocabulary_contains_no_hotwell_event_names():
@@ -72,10 +73,10 @@ def test_answer_vocabulary_contains_no_hotwell_event_names():
 # ------------------------------------------------------------------ sampler
 
 def test_sampler_is_deterministic_and_streams_are_independent():
-    a = sample_item(MASTER, "dev", 7)
-    assert a == sample_item(MASTER, "dev", 7)
-    others = [sample_item(MASTER, "dev", 8), sample_item(MASTER, "test", 7),
-              sample_item(MASTER + 1, "dev", 7)]
+    a = sample_item(MASTER, "dev", 7, preset=P01)
+    assert a == sample_item(MASTER, "dev", 7, preset=P01)
+    others = [sample_item(MASTER, "dev", 8, preset=P01), sample_item(MASTER, "test", 7, preset=P01),
+              sample_item(MASTER + 1, "dev", 7, preset=P01)]
     for o in others:
         assert o.sim_seed != a.sim_seed and o.profile != a.profile
 
@@ -84,7 +85,8 @@ def test_attempt_keeps_category_and_component_but_resamples_details():
     """B-Q5 regeneration must not bias the category mix."""
     changed = 0
     for i in range(200):
-        a0, a1 = sample_item(MASTER, "dev", i, 0), sample_item(MASTER, "dev", i, 1)
+        a0 = sample_item(MASTER, "dev", i, 0, preset=P01)
+        a1 = sample_item(MASTER, "dev", i, 1, preset=P01)
         assert (a0.fault is None) == (a1.fault is None)
         if a0.fault is None:
             continue
@@ -98,10 +100,10 @@ def test_attempt_keeps_category_and_component_but_resamples_details():
 
 def test_json_round_trip_and_schema_gate():
     for i in range(50):
-        it = sample_item(MASTER, "dev", i)
+        it = sample_item(MASTER, "dev", i, preset=P01)
         back = ItemRecord.from_json(it.to_json())
         assert back == it and back.content_hash() == it.content_hash()
-    bad = sample_item(MASTER, "dev", 0).to_dict()
+    bad = sample_item(MASTER, "dev", 0, preset=P01).to_dict()
     bad["schema"] = "hotwell-bench/item/0"
     with pytest.raises(ValueError):
         ItemRecord.from_dict(bad)
@@ -110,7 +112,7 @@ def test_json_round_trip_and_schema_gate():
 def test_sampler_rejects_bad_inputs():
     for args in ((-1, "dev", 0), (1.5, "dev", 0), (1, "train", 0), (1, "dev", -1)):
         with pytest.raises(ValueError):
-            sample_item(*args)
+            sample_item(*args, preset=P01)
 
 
 # Self-pin (B1, 2026-11-07; re-pinned 2026-11-08 for the 0.1 sampling exclusions): the
@@ -121,7 +123,7 @@ PIN_DEV0 = "a252b3ff38678bbbbef9a75d5a01eb91d5ef231c4c954a1e247ba3d40a7bd5f3"
 
 
 def test_sampler_pin():
-    it = sample_item(MASTER, "dev", 0)
+    it = sample_item(MASTER, "dev", 0, preset=P01)
     print(f"\n{it.to_json()}\nhash {it.content_hash()}")
     assert it.schema == SCHEMA
     assert it.content_hash() == PIN_DEV0
@@ -132,7 +134,7 @@ def _binom_ok(k: int, n: int, p: float, z: float = 4.0) -> bool:
 
 
 def test_sampled_distributions_match_the_plan():
-    items = [sample_item(MASTER, "dev", i) for i in range(N_DIST)]
+    items = [sample_item(MASTER, "dev", i, preset=P01) for i in range(N_DIST)]
     faults = [it.fault for it in items if it.fault is not None]
     n_null = N_DIST - len(faults)
     cats = Counter(f.category for f in faults)
@@ -142,34 +144,34 @@ def test_sampled_distributions_match_the_plan():
     fp = sum(it.operator.fp_swap_s is not None for it in items)
     ramp = [f.shape == "ramp" for f in faults if f.category not in
             ("stuck_actuator", "actuator_sluggish", "instrument_fault")]
-    print(f"\nN {N_DIST}: null {n_null} ({n_null / N_DIST:.3f}, plan {P.P_NULL}); "
-          f"flat days {flat / N_DIST:.3f} (plan {P.P_FLAT_DAY}); CP swap {cp / N_DIST:.3f}, "
-          f"FP swap {fp / N_DIST:.3f} (plan {P.P_SWAP}); ramped factor faults "
-          f"{sum(ramp) / len(ramp):.3f} (plan {P.P_RAMP})")
+    print(f"\nN {N_DIST}: null {n_null} ({n_null / N_DIST:.3f}, plan {P01.p_null}); "
+          f"flat days {flat / N_DIST:.3f} (plan {P01.p_flat_day}); CP swap {cp / N_DIST:.3f}, "
+          f"FP swap {fp / N_DIST:.3f} (plan {P01.p_swap}); ramped factor faults "
+          f"{sum(ramp) / len(ramp):.3f} (plan {P01.p_ramp})")
     for c in FAULT_CATEGORIES:
         print(f"  {c:30s} {cats[c]:5d}")
     assert not set(cats) & EXCLUDED_CATEGORIES
     assert not {(f.category, f.component) for f in faults} & EXCLUDED_COMPONENTS
     print(f"  sensor kinds {dict(kinds)}")
-    assert _binom_ok(n_null, N_DIST, P.P_NULL)
-    assert _binom_ok(flat, N_DIST, P.P_FLAT_DAY)
-    assert _binom_ok(cp, N_DIST, P.P_SWAP) and _binom_ok(fp, N_DIST, P.P_SWAP)
-    assert _binom_ok(sum(ramp), len(ramp), P.P_RAMP)
+    assert _binom_ok(n_null, N_DIST, P01.p_null)
+    assert _binom_ok(flat, N_DIST, P01.p_flat_day)
+    assert _binom_ok(cp, N_DIST, P01.p_swap) and _binom_ok(fp, N_DIST, P01.p_swap)
+    assert _binom_ok(sum(ramp), len(ramp), P01.p_ramp)
     for c in SAMPLED_CATEGORIES:
         assert _binom_ok(cats[c], len(faults), 1 / len(SAMPLED_CATEGORIES)), c
     for k in SENSOR_KINDS:
         assert _binom_ok(kinds[k], sum(kinds.values()), 1 / len(SENSOR_KINDS)), k
 
-    lo, hi = P.MAG_RANGE
+    lo, hi = P01.mag_range
     for it in items:
         f = it.fault
         bp = it.profile.breakpoints()
         assert all(t1 > t0 for (t0, _), (t1, _) in zip(bp, bp[1:], strict=False))
         assert bp[-2][0] < P.DAY_S
-        assert P.TROUGH_MW[0] <= it.profile.trough_mw <= P.TROUGH_MW[1]
+        assert P01.trough_mw[0] <= it.profile.trough_mw <= P01.trough_mw[1]
         if f is None:
             continue
-        assert P.ONSET_S[0] <= f.t_inj <= P.ONSET_S[1]
+        assert P01.onset_s[0] <= f.t_inj <= P01.onset_s[1]
         if f.magnitude_ratio is not None:
             assert lo * (1 - 1e-12) <= f.magnitude_ratio <= hi * (1 + 1e-12), f
         if f.mechanism in ("pump_degrade", "valve_degrade", "firing_degrade"):
@@ -186,7 +188,7 @@ def test_every_sampled_item_builds_and_validates_in_hotwell():
     n = 0
     for split in ("dev", "test"):
         for i in range(150):
-            it = sample_item(MASTER, split, i)
+            it = sample_item(MASTER, split, i, preset=P01)
             b = build(it)                      # load_validated raises on any bad event
             n += 1
             ev, tw = b.scenario.events, b.twin.events
@@ -213,8 +215,8 @@ def test_every_sampled_item_builds_and_validates_in_hotwell():
 
 
 def test_fault_event_carries_only_hotwell_params():
-    it = next(sample_item(MASTER, "dev", i) for i in range(100)
-              if sample_item(MASTER, "dev", i).fault is not None)
+    it = next(sample_item(MASTER, "dev", i, preset=P01) for i in range(100)
+              if sample_item(MASTER, "dev", i, preset=P01).fault is not None)
     row = fault_event(it)
     print(f"\n{it.fault.category}/{it.fault.component}: {row}")
     assert row["t"] == it.fault.t_inj
@@ -222,7 +224,7 @@ def test_fault_event_carries_only_hotwell_params():
 
 
 def test_answer_key_shape():
-    keys = [answer_key(sample_item(MASTER, "dev", i)) for i in range(200)]
+    keys = [answer_key(sample_item(MASTER, "dev", i, preset=P01)) for i in range(200)]
     for k in keys:
         if not k["fault_present"]:
             assert k == {"fault_present": False, "category": "none", "component": None,
@@ -236,6 +238,6 @@ def test_answer_key_shape():
 
 def test_scenario_name_is_split_and_index_only():
     """The name carries no fault information (it may surface in logs)."""
-    it = sample_item(MASTER, "dev", 3)
+    it = sample_item(MASTER, "dev", 3, preset=P01)
     assert scenario_dict(it)["name"] == "dev-0003-a0"
     assert scenario_dict(it, twin=True)["name"] == "dev-0003-a0-twin"

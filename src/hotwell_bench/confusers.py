@@ -37,10 +37,10 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from hotwell_bench import presets as P
 from hotwell_bench.build import build
 from hotwell_bench.items import Fault, ItemRecord, detection_scale
 from hotwell_bench.label import evidence
+from hotwell_bench.presets import Preset
 from hotwell_bench.run import COLUMNS, Drive, RunResult
 from hotwell_bench.taxonomy import CATEGORIES
 
@@ -169,10 +169,10 @@ def confuser_fault(primary: Fault, c: Candidate, dev: float | None) -> Fault:
     return Fault(**common, shape="ramp" if R > 0 else "step", params=params, magnitude=dev)
 
 
-def _initial_dev(c: Candidate, sig: str, shift: float) -> float:
+def _initial_dev(c: Candidate, sig: str, shift: float, preset: Preset) -> float:
     if c.mechanism == "sensor_fault":
         return shift if c.target == sig else detection_scale(c.target)
-    return P.THRESHOLDS.get((c.mechanism, c.target), (0.01, ""))[0]
+    return preset.thresholds.get((c.mechanism, c.target), (0.01, ""))[0]
 
 
 def _valid(c: Candidate, dev: float) -> bool:
@@ -200,7 +200,8 @@ class _Brancher:
         return d.result()
 
 
-def check_item(item: ItemRecord, fa: RunResult, tw: RunResult) -> list[ConfuserResult]:
+def check_item(item: ItemRecord, fa: RunResult, tw: RunResult, *,
+               preset: Preset) -> list[ConfuserResult]:
     f = item.fault
     cands = candidates(item, fa)
     if not cands:
@@ -240,7 +241,7 @@ def check_item(item: ItemRecord, fa: RunResult, tw: RunResult) -> list[ConfuserR
                 r = br.run(confuser_fault(f, _c, x), until=w1 + 1)
                 return float((r.values[_sl, _j] - tw.values[_sl, _j]).mean())
 
-            x0 = _initial_dev(c, sig, shift)
+            x0 = _initial_dev(c, sig, shift, preset)
             m0 = measure(x0)
             evals = 1
             pts = [(x0, m0)]
@@ -272,7 +273,7 @@ def check_item(item: ItemRecord, fa: RunResult, tw: RunResult) -> list[ConfuserR
         cr = br.run(cf, until=t_end)            # same sample count as the primary
         same_end = (len(cr.t) == len(fa.t)) and (cr.summary["plant_dead"]
                                                   == fa.summary["plant_dead"])
-        ev = evidence(cr.values, fa.values)
+        ev = evidence(cr.values, fa.values, preset=preset)
         hits = [(t, r, COLUMNS[i]) for r in ("level", "stuck", "variance")
                 for i, t in enumerate(ev[r]) if t is not None]
         sep = min(hits) if hits else None

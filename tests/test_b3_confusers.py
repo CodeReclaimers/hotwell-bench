@@ -12,6 +12,7 @@ from hotwell_bench.confusers import (
     running_at,
 )
 from hotwell_bench.items import SCHEMA, DayProfile, Fault, ItemRecord, OperatorPlan
+from hotwell_bench.presets import P01
 from hotwell_bench.run import RunResult, run_built
 
 FLAT = DayProfile(True, 48.0, 3600.0, 1800.0, 14400.0, 1800.0)
@@ -90,7 +91,7 @@ def test_gb3_fp1_vs_frv(name, head, fp_swap, want):
     it = _item(_fp1(head), fp_swap=fp_swap)
     b = build(it)
     fa, tw = run_built(b, "faulted", until=4200), run_built(b, "twin", until=4200)
-    res = check_item(it, fa, tw)
+    res = check_item(it, fa, tw, preset=P01)
     for r in res:
         print(f"\n{name}: {r.category}/{r.component} {r.params} -> confusable {r.confusable} "
               f"({r.reason}); signature {r.signature} shift {r.target_shift} achieved "

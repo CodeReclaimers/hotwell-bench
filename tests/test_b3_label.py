@@ -8,6 +8,7 @@ import pytest
 from hotwell_bench import label as L
 from hotwell_bench.build import build
 from hotwell_bench.items import SCHEMA, DayProfile, Fault, ItemRecord, OperatorPlan
+from hotwell_bench.presets import P01
 from hotwell_bench.run import COLUMNS, run_built, run_items
 from hotwell_bench.taxonomy import CATEGORIES
 
@@ -44,30 +45,30 @@ def test_rules_on_synthetic_signals_report_the_start_of_the_evidence():
     # level: +2 D_i from sample 300 on
     F = T.copy()
     F[300:, j] += 2.0 * L.SCALE[j]
-    ev = L.evidence(F, T)
+    ev = L.evidence(F, T, preset=P01)
     print(f"\nlevel: {ev['level'][j]}, stuck {ev['stuck'][j]}, variance {ev['variance'][j]}")
     assert ev["level"][j] == 300 and ev["first_divergence"][j] == 300
     # stuck: frozen from sample 400
     F = T.copy()
     F[400:, j] = F[400, j]
-    ev = L.evidence(F, T)
+    ev = L.evidence(F, T, preset=P01)
     print(f"stuck: level {ev['level'][j]}, stuck {ev['stuck'][j]}, variance {ev['variance'][j]}")
     assert ev["stuck"][j] == 401          # first sample that differs from the twin
     assert ev["variance"][j] is not None
     # noise x3 from sample 1500: variance fires, level may not
     F = T.copy()
     F[1500:, j] = 3.0 * T[1500:, j]
-    ev = L.evidence(F, T)
+    ev = L.evidence(F, T, preset=P01)
     print(f"noise x3: level {ev['level'][j]}, variance {ev['variance'][j]}")
-    assert ev["variance"][j] is not None and 1500 <= ev["variance"][j] < 1500 + L.VAR_WINDOW
+    assert ev["variance"][j] is not None and 1500 <= ev["variance"][j] < 1500 + P01.var_window
     # a chance-length run (twin max + 5) is not stuck evidence
     F = T.copy()
     _, lt = L._runs(T[:, j])
     k = int(lt.max()) + 5
     F[2000:2000 + k, j] = F[2000, j]
-    assert L.evidence(F, T)["stuck"][j] is None
+    assert L.evidence(F, T, preset=P01)["stuck"][j] is None
     # identical: nothing anywhere
-    ev = L.evidence(T, T.copy())
+    ev = L.evidence(T, T.copy(), preset=P01)
     assert all(x is None for r in ("level", "stuck", "variance") for x in ev[r])
 
 
@@ -77,7 +78,7 @@ def test_level_rule_needs_ten_consecutive_samples():
     j = 0
     F[20:29, j] = 2 * L.SCALE[j]           # 9 samples: no
     F[50:60, j] = 2 * L.SCALE[j]           # 10 samples: yes, at 50
-    assert L.level_rule(F, T)[j] == 50
+    assert L.level_rule(F, T, P01)[j] == 50
 
 
 # ------------------------------------------------------------- seeded simulator cases
@@ -85,7 +86,7 @@ def test_level_rule_needs_ten_consecutive_samples():
 def _label(fault, until, op=NO_OPERATOR):
     b = build(_item(fault, op))
     fa, tw = run_built(b, "faulted", until=until), run_built(b, "twin", until=until)
-    return L.label_runs(b.item, fa, tw)
+    return L.label_runs(b.item, fa, tw, preset=P01)
 
 
 def test_null_item_has_no_evidence():
@@ -199,14 +200,14 @@ def test_gb2_level_rule_reproduces_the_hotwell_sweep(tmp_path):
     for it, (mech, tgt, _pname, val, delay, inst) in zip(items, SWEEP_AB, strict=True):
         fa = run_cached(it, "faulted", tmp_path, until=3600)
         tw = run_cached(it, "twin", tmp_path, until=3600)
-        lv = L.evidence(fa.values, tw.values)["level"]
+        lv = L.evidence(fa.values, tw.values, preset=P01)["level"]
         hits = [(t, COLUMNS[i]) for i, t in enumerate(lv) if t is not None]
         got = min(hits) if hits else None
         got_delay = None if got is None else max(0, got[0] - 300)
         ok = (got_delay is None and delay is None) or (
             got_delay is not None and delay is not None and abs(got_delay - delay) <= 1
             and got[1] == inst)
-        lab = L.label_runs(it, fa, tw)
+        lab = L.label_runs(it, fa, tw, preset=P01)
         print(f"{mech:18s} {tgt:9s} {val!s:>6s}: hotwell {delay!s:>4s} {inst or '-':16s} "
               f"bench level {got_delay!s:>4s} {got[1] if got else '-':16s} | all rules "
               f"t_det-300 {None if lab.t_det is None else lab.t_det - 300} ({lab.rule}/"

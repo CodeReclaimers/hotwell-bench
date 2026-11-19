@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from hotwell_bench.pipeline import ATTEMPT_CAP, label_indices, summarize
+from hotwell_bench.presets import P01
 from hotwell_bench.provenance import check_environment
 from hotwell_bench.secrecy import REPO_ROOT
 
@@ -66,7 +67,7 @@ def main() -> int:
     print(f"environment OK: hotwell {env['hotwell']['commit_id'][:12]}, numpy "
           f"{env['numpy']}, bench {record['bench']}", flush=True)
     res = label_indices(a.master, a.split, parse_range(a.indices), cache, out,
-                        workers=a.workers, cap=a.cap)
+                        workers=a.workers, cap=a.cap, preset=P01)
     record["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     (Path(out) / "run.json").write_text(json.dumps(record, indent=1, sort_keys=True))
     print(summarize(res), flush=True)

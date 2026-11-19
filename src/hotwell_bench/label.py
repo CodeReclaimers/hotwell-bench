@@ -6,18 +6,21 @@ evidence in the 1 Hz sensed data. Each is computed per instrument and reports
 the time of the FIRST sample of the qualifying stretch, the convention of
 hotwell `scripts/fault_detectability.py::detect`:
 
-- level    |F − T| > D_i for LEVEL_RUN consecutive samples, D_i = max(3σ_i, 2 LSB_i).
+- level    |F − T| > D_i for `level_run` consecutive samples, D_i = max(3σ_i, 2 LSB_i).
            This is the plan's original oracle bound, and the 0.4.0 sweep's rule.
-- stuck    a run of identical consecutive readings in F that is at least STUCK_FACTOR ×
-           and STUCK_MARGIN samples longer than the longest such run anywhere in T.
+- stuck    a run of identical consecutive readings in F that is at least `stuck_factor` ×
+           and `stuck_margin` samples longer than the longest such run anywhere in T.
 - variance the ratio of rolling standard deviations of first differences
-           (VAR_WINDOW samples) leaves [VAR_LO, VAR_HI] for VAR_SUSTAIN samples.
+           (`var_window` samples) leaves [`var_lo`, `var_hi`] for `var_sustain` samples.
            First differences remove level shifts, so this sees noise changes,
            freezes and dithering stopping.
 
 The last two exist because the level rule structurally cannot see faults that
 change variance rather than level (plan §4.1, B2 finding). t_det is the earliest
 evidence over all rules and instruments.
+
+The constants in backticks are fields of the generation preset (presets.Preset),
+passed explicitly to every rule.
 
 Before the first sample where F ≠ T all three statistics are exactly equal,
 so no rule can fire before the fault acts. One exception is clamped: a frozen
@@ -41,14 +44,9 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 from hotwell_bench.items import ItemRecord, detection_scale
+from hotwell_bench.presets import Preset
 from hotwell_bench.run import COLUMNS, RunResult
 
-LEVEL_RUN = 10
-VAR_WINDOW = 600
-VAR_SUSTAIN = 60
-STUCK_FACTOR = 2
-STUCK_MARGIN = 60
-VAR_LO, VAR_HI = 0.8, 1.25
 RULES = ("level", "stuck", "variance")
 SCALE = np.array([detection_scale(c) for c in COLUMNS])
 
@@ -62,9 +60,9 @@ def _first_run_start(flag: np.ndarray, length: int) -> int | None:
     return int(hits[0]) if hits.size else None
 
 
-def level_rule(F: np.ndarray, T: np.ndarray) -> list[int | None]:
+def level_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
     over = np.abs(F - T) > SCALE
-    return [_first_run_start(over[:, i], LEVEL_RUN) for i in range(F.shape[1])]
+    return [_first_run_start(over[:, i], preset.level_run) for i in range(F.shape[1])]
 
 
 def _runs(col: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -75,7 +73,8 @@ def _runs(col: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return starts, lengths
 
 
-def stuck_rule(F: np.ndarray, T: np.ndarray, first_div: list[int | None]) -> list[int | None]:
+def stuck_rule(F: np.ndarray, T: np.ndarray, first_div: list[int | None],
+               preset: Preset) -> list[int | None]:
     out: list[int | None] = []
     for i in range(F.shape[1]):
         if first_div[i] is None:
@@ -83,7 +82,7 @@ def stuck_rule(F: np.ndarray, T: np.ndarray, first_div: list[int | None]) -> lis
             continue
         _, lt = _runs(T[:, i])
         sf, lf = _runs(F[:, i])
-        need = max(STUCK_FACTOR * int(lt.max()), int(lt.max()) + STUCK_MARGIN)
+        need = max(preset.stuck_factor * int(lt.max()), int(lt.max()) + preset.stuck_margin)
         hit = np.flatnonzero(lf >= need)
         out.append(None if not hit.size else max(int(sf[hit[0]]), first_div[i]))
     return out
@@ -102,27 +101,28 @@ def _rolling_std(x: np.ndarray, w: int) -> np.ndarray:
     return out
 
 
-def variance_rule(F: np.ndarray, T: np.ndarray) -> list[int | None]:
+def variance_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
     out: list[int | None] = []
     dF, dT = np.diff(F, axis=0), np.diff(T, axis=0)
     for i in range(F.shape[1]):
         if np.array_equal(dF[:, i], dT[:, i]):
             out.append(None)
             continue
-        sf, st = _rolling_std(dF[:, i], VAR_WINDOW), _rolling_std(dT[:, i], VAR_WINDOW)
+        w = preset.var_window
+        sf, st = _rolling_std(dF[:, i], w), _rolling_std(dT[:, i], w)
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = np.where(st > 0, sf / st, np.where(sf > 0, np.inf, 1.0))
         # identical windows give identical sums, so the ratio is exactly 1 there
         same = np.isclose(sf, st, rtol=0.0, atol=0.0)
         ratio = np.where(same, 1.0, ratio)
-        flag = (ratio > VAR_HI) | (ratio < VAR_LO)
+        flag = (ratio > preset.var_hi) | (ratio < preset.var_lo)
         flag &= ~np.isnan(sf)
-        j = _first_run_start(flag, VAR_SUSTAIN)
+        j = _first_run_start(flag, preset.var_sustain)
         out.append(None if j is None else j + 1)    # diff index j <-> sample j+1
     return out
 
 
-def evidence(F: np.ndarray, T: np.ndarray) -> dict[str, list[int | None]]:
+def evidence(F: np.ndarray, T: np.ndarray, *, preset: Preset) -> dict[str, list[int | None]]:
     """Per rule, per instrument: index of the first evidence sample (None = none).
     Rows are 1 Hz samples starting at t = 0, so an index is also a time in s."""
     n = min(len(F), len(T))
@@ -130,8 +130,8 @@ def evidence(F: np.ndarray, T: np.ndarray) -> dict[str, list[int | None]]:
     neq = F != T
     first_div = [int(np.argmax(neq[:, i])) if neq[:, i].any() else None
                  for i in range(F.shape[1])]
-    return {"level": level_rule(F, T), "stuck": stuck_rule(F, T, first_div),
-            "variance": variance_rule(F, T), "first_divergence": first_div}
+    return {"level": level_rule(F, T, preset), "stuck": stuck_rule(F, T, first_div, preset),
+            "variance": variance_rule(F, T, preset), "first_divergence": first_div}
 
 
 @dataclass
@@ -156,8 +156,8 @@ class Label:
         return asdict(self)
 
 
-def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult) -> Label:
-    ev = evidence(fa.values, tw.values)
+def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult, *, preset: Preset) -> Label:
+    ev = evidence(fa.values, tw.values, preset=preset)
     per_rule = {r: {COLUMNS[i]: t for i, t in enumerate(ev[r]) if t is not None}
                 for r in RULES}
     cands = [(t, r, inst) for r in RULES for inst, t in per_rule[r].items()]

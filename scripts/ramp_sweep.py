@@ -4,7 +4,7 @@
 Usage: python scripts/ramp_sweep.py [--workers N] [--cache DIR]
 
 The 0.4.0 sweep measured step onsets only. Here every thresholded fault
-(presets.THRESHOLDS) is run at 1×, 2× and 4× its step threshold, as a step
+(presets.P01.thresholds) is run at 1×, 2× and 4× its step threshold, as a step
 (ramp 0) and with ramp_s ∈ {600, 3600, 21600}. Setup as in G-B2: AB + 3E, flat
 60 MW, no operator, seed 42, onset at 1800 s, run until onset + ramp + 3600 s.
 Labelled with the bench rules (label.label_runs). Reported per row:
@@ -21,9 +21,9 @@ import argparse
 import sys
 import tempfile
 
-from hotwell_bench import presets as P
 from hotwell_bench.items import SCHEMA, DayProfile, Fault, ItemRecord, OperatorPlan
 from hotwell_bench.label import label_runs
+from hotwell_bench.presets import P01
 from hotwell_bench.run import run_cached, run_items
 from hotwell_bench.taxonomy import CATEGORIES
 
@@ -37,7 +37,7 @@ FACTOR = {"pump_degrade": "head_factor", "valve_degrade": "cv_factor",
 
 
 def make_item(k: int, mech: str, target: str, ratio: float, ramp: float) -> ItemRecord:
-    thr = P.THRESHOLDS[(mech, target)][0]
+    thr = P01.thresholds[(mech, target)][0]
     dev = ratio * thr
     if mech in FACTOR:
         params = {FACTOR[mech]: 1.0 - dev}
@@ -64,7 +64,7 @@ def main() -> int:
     cache = a.cache or tempfile.mkdtemp(prefix="ramp-")
     rows = []
     k = 0
-    for (mech, target) in P.THRESHOLDS:
+    for (mech, target) in P01.thresholds:
         for ramp in RAMPS:
             for ratio in RATIOS:
                 rows.append((make_item(k, mech, target, ratio, ramp), mech, target, ratio, ramp))
@@ -81,7 +81,7 @@ def main() -> int:
         until = ONSET + ramp + 3600.0
         fa = run_cached(it, "faulted", cache, until=until)
         tw = run_cached(it, "twin", cache, until=until)
-        lab = label_runs(it, fa, tw)
+        lab = label_runs(it, fa, tw, preset=P01)
         d = None if lab.t_det is None else lab.t_det - ONSET
         de = None if d is None else d - int(ramp)
         print(f"{mech + ' ' + target:28s} {ratio:5.0f} {ramp:7.0f} "

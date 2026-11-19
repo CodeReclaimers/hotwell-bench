@@ -30,6 +30,7 @@ import numpy as np
 from hotwell.sensors import OBSERVATION_SPEC
 
 from hotwell_bench import presets as P
+from hotwell_bench.presets import Preset
 from hotwell_bench.taxonomy import (
     CATEGORIES,
     NULL_CATEGORY,
@@ -89,7 +90,7 @@ class Fault:
     shape: str                     # "step" | "ramp"
     params: dict = field(default_factory=dict)   # hotwell event params besides target
     sensor_kind: str | None = None  # recorded, not graded for 0.1 (B-Q3)
-    magnitude: float | None = None  # deviation from healthy (see presets.THRESHOLDS)
+    magnitude: float | None = None  # deviation from healthy (see Preset.thresholds)
     threshold: float | None = None
     threshold_source: str | None = None
 
@@ -162,53 +163,54 @@ def detection_scale(instrument: str) -> float:
     return max(3.0 * sigma, 2.0 * _SPEC[instrument].resolution)
 
 
-def _sample_profile(g: np.random.Generator) -> DayProfile:
+def _sample_profile(g: np.random.Generator, preset: Preset) -> DayProfile:
     # fixed draw count: 6 values, whether or not the day is flat
-    flat = bool(g.random() < P.P_FLAT_DAY)
-    trough = round(float(g.uniform(*P.TROUGH_MW)), 1)
-    start = float(round(g.uniform(*P.RAMP_DOWN_START_S)))
-    down = float(round(g.uniform(*P.RAMP_S)))
-    length = float(round(g.uniform(*P.TROUGH_LEN_S)))
-    up = float(round(g.uniform(*P.RAMP_S)))
+    flat = bool(g.random() < preset.p_flat_day)
+    trough = round(float(g.uniform(*preset.trough_mw)), 1)
+    start = float(round(g.uniform(*preset.ramp_down_start_s)))
+    down = float(round(g.uniform(*preset.ramp_s)))
+    length = float(round(g.uniform(*preset.trough_len_s)))
+    up = float(round(g.uniform(*preset.ramp_s)))
     return DayProfile(flat, trough, start, down, length, up)
 
 
-def _sample_operator(g: np.random.Generator) -> OperatorPlan:
+def _sample_operator(g: np.random.Generator, preset: Preset) -> OperatorPlan:
     # fixed draw count: 5 values
-    cadence = int(g.integers(P.NOP03_CADENCE_S[0], P.NOP03_CADENCE_S[1] + 1))
-    cp_on = bool(g.random() < P.P_SWAP)
-    cp_t = int(g.integers(P.SWAP_WINDOW_S[0], P.SWAP_WINDOW_S[1] + 1))
-    fp_on = bool(g.random() < P.P_SWAP)
-    fp_t = int(g.integers(P.SWAP_WINDOW_S[0], P.SWAP_WINDOW_S[1] + 1))
+    cadence = int(g.integers(preset.nop03_cadence_s[0], preset.nop03_cadence_s[1] + 1))
+    cp_on = bool(g.random() < preset.p_swap)
+    cp_t = int(g.integers(preset.swap_window_s[0], preset.swap_window_s[1] + 1))
+    fp_on = bool(g.random() < preset.p_swap)
+    fp_t = int(g.integers(preset.swap_window_s[0], preset.swap_window_s[1] + 1))
     return OperatorPlan(cadence, cp_t if cp_on else None, fp_t if fp_on else None,
-                        P.REACTION_S, P.REACTION_SIGMA)
+                        preset.reaction_s, preset.reaction_sigma)
 
 
 _FACTOR_PARAM = {"pump_degrade": "head_factor", "valve_degrade": "cv_factor",
                  "firing_degrade": "eta_factor"}
 
 
-def _sample_fault(g: np.random.Generator, category: str, component: str) -> Fault:
+def _sample_fault(g: np.random.Generator, category: str, component: str,
+                  preset: Preset) -> Fault:
     """Fixed draw count: 8 uniforms from g, consumed in the same order whatever
     the mechanism, then mapped through the mechanism's ranges."""
     u = g.random(8)
     mechanism, comps = CATEGORIES[category]
     target = comps[component]
     comp_out = None if plantwide(category) else component
-    t_inj = int(P.ONSET_S[0] + math.floor(u[0] * (P.ONSET_S[1] - P.ONSET_S[0] + 1)))
+    t_inj = int(preset.onset_s[0] + math.floor(u[0] * (preset.onset_s[1] - preset.onset_s[0] + 1)))
 
     def logu(x: float, lo: float, hi: float) -> float:
         return float(math.exp(math.log(lo) + x * (math.log(hi) - math.log(lo))))
 
-    ratio = logu(u[1], *P.MAG_RANGE)
-    ramp = bool(u[2] < P.P_RAMP)
-    ramp_s = float(round(logu(u[3], *P.ONSET_RAMP_S)))
+    ratio = logu(u[1], *preset.mag_range)
+    ramp = bool(u[2] < preset.p_ramp)
+    ramp_s = float(round(logu(u[3], *preset.onset_ramp_s)))
     common = dict(category=category, component=comp_out, mechanism=mechanism,
                   target=target, t_inj=t_inj)
 
     if mechanism in ("pump_degrade", "valve_degrade", "firing_degrade",
                      "condenser_fouling", "tube_leak"):
-        thr, src = P.THRESHOLDS[(mechanism, target)]
+        thr, src = preset.thresholds[(mechanism, target)]
         dev = ratio * thr
         if mechanism in _FACTOR_PARAM:
             params = {_FACTOR_PARAM[mechanism]: 1.0 - dev}
@@ -222,7 +224,7 @@ def _sample_fault(g: np.random.Generator, category: str, component: str) -> Faul
                      magnitude=dev, threshold=thr, threshold_source=src)
 
     if mechanism == "actuator_slow":
-        rf = logu(u[4], *P.SLOW_RATE_FACTOR)
+        rf = logu(u[4], *preset.slow_rate_factor)
         return Fault(**common, shape="step", params={"rate_factor": rf}, magnitude=rf,
                      threshold=None, threshold_source="never detected at constant load")
 
@@ -240,7 +242,7 @@ def _sample_fault(g: np.random.Generator, category: str, component: str) -> Faul
                      threshold_source="D_i = max(3 sigma, 2 LSB)")
     if kind == "drift":
         b = sign * ratio * d_i
-        t_reach = logu(u[7], *P.SENSOR_DRIFT_TIME_S)
+        t_reach = logu(u[7], *preset.sensor_drift_time_s)
         return Fault(**common, shape="ramp",
                      params={"kind": "drift", "rate": b / t_reach, "max_bias": abs(b)},
                      sensor_kind=kind, magnitude=b, threshold=d_i,
@@ -248,15 +250,17 @@ def _sample_fault(g: np.random.Generator, category: str, component: str) -> Faul
     if kind == "stuck":
         return Fault(**common, shape="step", params={"kind": "stuck"}, sensor_kind=kind)
     if kind == "lag":
-        tau = logu(u[4], *P.SENSOR_LAG_TAU_S)
+        tau = logu(u[4], *preset.sensor_lag_tau_s)
         return Fault(**common, shape="step", params={"kind": "lag", "tau_s": tau},
                      sensor_kind=kind, magnitude=tau)
-    factor = logu(u[4], *P.SENSOR_NOISE_FACTOR)
+    factor = logu(u[4], *preset.sensor_noise_factor)
     return Fault(**common, shape="step", params={"kind": "noise_increase", "factor": factor},
                  sensor_kind=kind, magnitude=factor)
 
 
-def sample_item(master_seed: int, split: str, index: int, attempt: int = 0) -> ItemRecord:
+def sample_item(master_seed: int, split: str, index: int, attempt: int = 0, *,
+                preset: Preset) -> ItemRecord:
+    """The item at (master_seed, split, index, attempt) under `preset`."""
     if not (isinstance(master_seed, int) and master_seed >= 0):
         raise ValueError(f"master_seed must be a non-negative int, got {master_seed!r}")
     if split not in SPLIT_IDS:
@@ -267,7 +271,7 @@ def sample_item(master_seed: int, split: str, index: int, attempt: int = 0) -> I
 
     s = _rng(master_seed, sid, index, _TAG_STRUCTURE)
     u_null, u_cat, u_comp = s.random(3)          # fixed: 3 draws
-    null = bool(u_null < P.P_NULL)
+    null = bool(u_null < preset.p_null)
     category = SAMPLED_CATEGORIES[min(int(u_cat * len(SAMPLED_CATEGORIES)),
                                       len(SAMPLED_CATEGORIES) - 1)]
     names = sampled_components(category)
@@ -275,8 +279,8 @@ def sample_item(master_seed: int, split: str, index: int, attempt: int = 0) -> I
 
     d = _rng(master_seed, sid, index, _TAG_DETAIL, attempt)
     sim_seed = int(d.integers(0, 2**31))
-    profile = _sample_profile(d)
-    operator = _sample_operator(d)
-    fault = _sample_fault(d, category, component)  # drawn even for null items (fixed count)
+    profile = _sample_profile(d, preset)
+    operator = _sample_operator(d, preset)
+    fault = _sample_fault(d, category, component, preset)  # drawn even for null items (fixed count)
     return ItemRecord(SCHEMA, split, index, attempt, sim_seed, profile, operator,
                       None if null else fault)

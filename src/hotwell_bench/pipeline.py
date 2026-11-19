@@ -28,6 +28,7 @@ from pathlib import Path
 from hotwell_bench.confusers import candidates, check_item
 from hotwell_bench.items import ItemRecord, sample_item
 from hotwell_bench.label import label_runs
+from hotwell_bench.presets import PRESETS, Preset
 from hotwell_bench.run import run_cached, run_items
 from hotwell_bench.secrecy import check_output_path
 
@@ -39,17 +40,22 @@ def _answer(category: str, component: str | None) -> dict:
 
 
 def _confuser_task(args) -> tuple[int, list[dict]]:
-    index, item_json, cache_dir, until = args
+    index, item_json, cache_dir, until, preset_name = args
     item = ItemRecord.from_json(item_json)
     fa = run_cached(item, "faulted", cache_dir, until)
     tw = run_cached(item, "twin", cache_dir, until)
-    return index, [r.to_dict() for r in check_item(item, fa, tw)]
+    return index, [r.to_dict() for r in check_item(item, fa, tw, preset=PRESETS[preset_name])]
 
 
 def label_indices(master: int, split: str, indices: list[int], cache_dir: str | Path,
                   out_dir: str | Path, workers: int | None = None,
-                  cap: int = ATTEMPT_CAP, until: float | None = None) -> dict[int, dict]:
-    """`until` shortens every run (tests only; real items run the full day)."""
+                  cap: int = ATTEMPT_CAP, until: float | None = None, *,
+                  preset: Preset) -> dict[int, dict]:
+    """Generate and label `indices` under `preset` (one of presets.PRESETS, by name,
+    so worker processes can look it up). `until` shortens every run (tests only;
+    real items run the full day)."""
+    if PRESETS.get(preset.name) is not preset:
+        raise ValueError(f"preset {preset.name!r} is not registered in presets.PRESETS")
     out = check_output_path(out_dir, split)
     check_output_path(cache_dir, split)
     out.mkdir(parents=True, exist_ok=True)
@@ -61,7 +67,7 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
     for attempt in range(cap):
         if not pending:
             break
-        items = {i: sample_item(master, split, i, attempt) for i in pending}
+        items = {i: sample_item(master, split, i, attempt, preset=preset) for i in pending}
         if attempt > 0:
             items = {i: it for i, it in items.items() if it.fault is not None}
         print(f"== attempt {attempt}: {len(items)} items", flush=True)
@@ -70,7 +76,7 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
         for i, it in items.items():
             fa = run_cached(it, "faulted", cache_dir, until)
             tw = run_cached(it, "twin", cache_dir, until)
-            lab = label_runs(it, fa, tw)
+            lab = label_runs(it, fa, tw, preset=preset)
             history[i].append({"attempt": attempt, "observable": lab.observable,
                                "t_det": lab.t_det, "rule": lab.rule,
                                "instrument": lab.instrument})
@@ -85,12 +91,13 @@ def label_indices(master: int, split: str, indices: list[int], cache_dir: str | 
                 nxt.append(i)
         pending = nxt
     for i in pending:
-        it = sample_item(master, split, i, 0)
+        it = sample_item(master, split, i, 0, preset=preset)
         results[i] = {"status": "excluded_at_cap", "item": json.loads(it.to_json()),
                       "label": None, "attempts": history[i], "confusers": [],
                       "accepted_answers": []}
     conf: dict[int, list] = {i: [] for i in accepted}
-    tasks = [(i, it.to_json(), str(cache_dir), until) for i, (it, _) in accepted.items()
+    tasks = [(i, it.to_json(), str(cache_dir), until, preset.name)
+             for i, (it, _) in accepted.items()
              if candidates(it, run_cached(it, "faulted", cache_dir, until))]
     if tasks:
         print(f"== confusers: {len(tasks)} items", flush=True)

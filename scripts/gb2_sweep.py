@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_b3_label import SWEEP_AB, gb2_items  # noqa: E402
 
 from hotwell_bench import label as L  # noqa: E402
+from hotwell_bench.presets import P01  # noqa: E402
 from hotwell_bench.run import COLUMNS, run_cached, run_items  # noqa: E402
 
 
@@ -35,7 +36,7 @@ def main() -> int:
     for it, (mech, tgt, _p, val, delay, _inst) in zip(items, SWEEP_AB, strict=True):
         fa = run_cached(it, "faulted", cache, until=3600)
         tw = run_cached(it, "twin", cache, until=3600)
-        ev = L.evidence(fa.values, tw.values)
+        ev = L.evidence(fa.values, tw.values, preset=P01)
         lv = [(t, COLUMNS[i]) for i, t in enumerate(ev["level"]) if t is not None]
         out = []
         for i, c in enumerate(COLUMNS):

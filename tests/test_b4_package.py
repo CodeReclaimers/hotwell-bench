@@ -13,6 +13,7 @@ from test_b3_label import gb2_items
 from hotwell_bench import package as K
 from hotwell_bench.items import sample_item
 from hotwell_bench.label import label_runs
+from hotwell_bench.presets import P01
 from hotwell_bench.run import run_cached, run_items
 from hotwell_bench.secrecy import REPO_ROOT
 from hotwell_bench.taxonomy import FAULT_CATEGORIES
@@ -29,7 +30,8 @@ PROV = {"environment": {"hotwell": {"requested_revision": "v0.4.0", "commit_id":
 def runs(tmp_path_factory):
     """A null item and an FP-1 −3 % step at 300 s (detected at once), 600 s each."""
     cache = tmp_path_factory.mktemp("cache")
-    null = next(it for i in range(20) if (it := sample_item(20261107, "dev", i)).fault is None)
+    null = next(it for i in range(20)
+                if (it := sample_item(20261107, "dev", i, preset=P01)).fault is None)
     fault = gb2_items()[3]
     items = [null, fault]
     run_items(items, cache, workers=2, until=UNTIL)
@@ -37,7 +39,7 @@ def runs(tmp_path_factory):
     for n, it in enumerate(items):
         fa = run_cached(it, "faulted", cache, until=UNTIL)
         tw = run_cached(it, "twin", cache, until=UNTIL)
-        lab = label_runs(it, fa, tw)
+        lab = label_runs(it, fa, tw, preset=P01)
         f = it.fault
         results[n] = {"status": "null" if f is None else "accepted",
                       "item": json.loads(it.to_json()), "label": lab.to_dict(),

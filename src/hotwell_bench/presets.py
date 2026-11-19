@@ -1,4 +1,4 @@
-"""Constants copied from hotwell v0.4.0, plus bench-owned sampling ranges.
+"""Constants copied from hotwell v0.4.0, plus bench-owned generation presets.
 
 The noise presets live in hotwell's `scripts/quiet_day.py`, which is not part of
 the installed package, so they are copied here verbatim. The copy is checked
@@ -10,6 +10,10 @@ instrument resting at its range floor biases it upward. `makeup_flow` (σ 0.05,
 LSB 0.1, floor 0) reads up to 0.2 kg/s with the valve shut; task.md says so.
 """
 from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 
 #: hotwell scripts/quiet_day.py::QUIET_DAY_SENSOR_NOISE at v0.4.0 (5f57636), verbatim.
 #: sigma in instrument units; tau [s] (0 = white).
@@ -54,28 +58,63 @@ THREE_ELEMENT = True
 DAY_S = 86400.0
 RATED_MW = 60.0
 
-# --------------------------------------------------------------- sampling ranges
-# PLAN-bench-0.1.md §3. Times in s, power in MW (gross).
-P_FLAT_DAY = 0.2                         # fraction of days held flat at 60 MW
-TROUGH_MW = (36.0, 48.0)
-RAMP_DOWN_START_S = (1 * 3600.0, 5 * 3600.0)
-RAMP_S = (1800.0, 5400.0)                # each ramp 30–90 min
-TROUGH_LEN_S = (4 * 3600.0, 8 * 3600.0)
+# --------------------------------------------------------------- generation presets
 
-NOP03_CADENCE_S = (240, 420)             # integer seconds
-P_SWAP = 0.7                             # per pump pair (CP, FP)
-SWAP_WINDOW_S = (2 * 3600, 22 * 3600)
-REACTION_S = 5.0                         # ProcedureRunner default
-#: lognormal sigma of the operator's reaction delay. Provisional: the plan asks
-#: only for sigma > 0. B3 must check whether reaction-time divergence between
-#: twins makes t_det spuriously early.
-REACTION_SIGMA = 0.3
 
-P_NULL = 0.2                             # fault-free items
-ONSET_S = (2 * 3600, 20 * 3600)          # t_inj window, integer seconds
-P_RAMP = 0.5                             # ramped vs step onset (factor faults)
-ONSET_RAMP_S = (600.0, 6 * 3600.0)       # log-uniform
-MAG_RANGE = (0.5, 4.0)                   # × threshold, log-uniform
+@dataclass(frozen=True)
+class Preset:
+    """Everything that sets item difficulty: sampling ranges and labeller constants.
+
+    A preset is passed explicitly to the sampler (`items.sample_item`), the
+    labeller (`label.label_runs`) and the confuser check. A split is generated
+    under exactly one preset. The plant constants above (noise, drum model, day
+    length) are not part of it: they are hotwell configuration, shared by every
+    preset. Times in s, power in MW (gross).
+    """
+    name: str
+
+    # day profile (PLAN-bench-0.1.md §3)
+    p_flat_day: float                        # fraction of days held flat at 60 MW
+    trough_mw: tuple[float, float]
+    ramp_down_start_s: tuple[float, float]
+    ramp_s: tuple[float, float]              # each ramp
+    trough_len_s: tuple[float, float]
+
+    # operator plan
+    nop03_cadence_s: tuple[int, int]         # integer seconds
+    p_swap: float                            # per pump pair (CP, FP)
+    swap_window_s: tuple[int, int]
+    reaction_s: float                        # ProcedureRunner default
+    #: lognormal sigma of the operator's reaction delay. Provisional: the plan asks
+    #: only for sigma > 0. B3 must check whether reaction-time divergence between
+    #: twins makes t_det spuriously early.
+    reaction_sigma: float
+
+    # faults
+    p_null: float                            # fault-free items
+    onset_s: tuple[int, int]                 # t_inj window, integer seconds
+    p_ramp: float                            # ramped vs step onset (factor faults)
+    onset_ramp_s: tuple[float, float]        # log-uniform
+    #: × threshold, log-uniform. Also the multiple of D_i for sensor bias and
+    #: drift faults (random sign), so a bias of k·D_i is k× the oracle threshold
+    #: on its own instrument.
+    mag_range: tuple[float, float]
+    #: step detectability thresholds per (mechanism, target): (deviation, source)
+    thresholds: Mapping[tuple[str, str], tuple[float, str]]
+    slow_rate_factor: tuple[float, float]    # actuator_slow, log-uniform
+    sensor_drift_time_s: tuple[float, float]  # time to reach the final bias, log-uniform
+    sensor_lag_tau_s: tuple[float, float]    # log-uniform
+    sensor_noise_factor: tuple[float, float]  # log-uniform
+
+    # labeller (label.py describes the rules)
+    level_run: int
+    var_window: int
+    var_sustain: int
+    stuck_factor: int
+    stuck_margin: int
+    var_lo: float
+    var_hi: float
+
 
 #: Step detectability thresholds, AB + 3E column of hotwell
 #: scripts/fault_detectability.py at v0.4.0 (HANDOFF "Notes for the bench phase"),
@@ -83,7 +122,7 @@ MAG_RANGE = (0.5, 4.0)                   # × threshold, log-uniform
 #: factor − 1 for fouling, kg/s for leaks. "swept": the smallest swept magnitude
 #: that was detected (an upper bound on the true threshold). "assumed": the
 #: component was not swept and borrows the named sibling's value.
-THRESHOLDS: dict[tuple[str, str], tuple[float, str]] = {
+THRESHOLDS_V040: Mapping[tuple[str, str], tuple[float, str]] = MappingProxyType({
     ("pump_degrade", "fp1"): (0.005, "swept"),
     ("pump_degrade", "fp2"): (0.005, "assumed: fp1"),
     ("pump_degrade", "cp1"): (0.01, "swept"),
@@ -94,15 +133,44 @@ THRESHOLDS: dict[tuple[str, str], tuple[float, str]] = {
     ("firing_degrade", ""): (0.01, "swept (0.005 not detected)"),
     ("condenser_fouling", ""): (0.25, "swept (0.1 not detected)"),
     ("tube_leak", ""): (0.1, "swept (smallest swept, detected at 689 s)"),
-}
-#: actuator_slow was never detected at constant load (any factor 0.05–0.5); it is
-#: sampled across the swept range instead of from a threshold.
-SLOW_RATE_FACTOR = (0.05, 0.5)           # log-uniform
+})
 
-# Sensor faults (never swept in hotwell). Instrument detection scale
-# D_i = max(3 σ_i, 2 LSB_i), the same bound the twin criterion uses, so a bias of
-# k·D_i is k× the oracle threshold on its own instrument. Provisional; B3 measures.
-SENSOR_BIAS_X = MAG_RANGE                # × D_i, random sign
-SENSOR_DRIFT_TIME_S = (600.0, 6 * 3600.0)  # time to reach the final bias, log-uniform
-SENSOR_LAG_TAU_S = (5.0, 300.0)          # log-uniform
-SENSOR_NOISE_FACTOR = (2.0, 10.0)        # log-uniform
+#: The 0.1 preset (PLAN-bench-0.1.md §3, §4). The 0.1 splits were generated with
+#: these values; regenerating the 0.1 dev split under P01 must reproduce its
+#: manifest hash (PLAN-bench-0.2.md G-B0r).
+P01 = Preset(
+    name="P01",
+    p_flat_day=0.2,
+    trough_mw=(36.0, 48.0),
+    ramp_down_start_s=(1 * 3600.0, 5 * 3600.0),
+    ramp_s=(1800.0, 5400.0),                 # each ramp 30–90 min
+    trough_len_s=(4 * 3600.0, 8 * 3600.0),
+    nop03_cadence_s=(240, 420),
+    p_swap=0.7,
+    swap_window_s=(2 * 3600, 22 * 3600),
+    reaction_s=5.0,
+    reaction_sigma=0.3,
+    p_null=0.2,
+    onset_s=(2 * 3600, 20 * 3600),
+    p_ramp=0.5,
+    onset_ramp_s=(600.0, 6 * 3600.0),
+    mag_range=(0.5, 4.0),
+    thresholds=THRESHOLDS_V040,
+    #: actuator_slow was never detected at constant load (any factor 0.05–0.5); it
+    #: is sampled across the swept range instead of from a threshold.
+    slow_rate_factor=(0.05, 0.5),
+    # Sensor faults (never swept in hotwell); scale D_i = max(3 σ_i, 2 LSB_i), the
+    # same bound the twin criterion uses. Provisional; B3 measures.
+    sensor_drift_time_s=(600.0, 6 * 3600.0),
+    sensor_lag_tau_s=(5.0, 300.0),
+    sensor_noise_factor=(2.0, 10.0),
+    level_run=10,
+    var_window=600,
+    var_sustain=60,
+    stuck_factor=2,
+    stuck_margin=60,
+    var_lo=0.8,
+    var_hi=1.25,
+)
+
+PRESETS: Mapping[str, Preset] = MappingProxyType({P01.name: P01})

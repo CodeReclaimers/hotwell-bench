@@ -8,6 +8,7 @@ import pytest
 
 from hotwell_bench.items import sample_item
 from hotwell_bench.pipeline import label_indices, summarize
+from hotwell_bench.presets import P01
 
 MASTER = 20261107
 
@@ -18,13 +19,13 @@ def test_pipeline_regenerates_excludes_and_writes(tmp_path):
     items are unobservable and exercise regeneration and the cap."""
     idx = [0, 1, 2, 3, 4, 5]
     res = label_indices(MASTER, "dev", idx, tmp_path / "cache", tmp_path / "labels",
-                        workers=12, cap=2, until=10800)
+                        workers=12, cap=2, until=10800, preset=P01)
     print("\n" + summarize(res))
     for i in idx:
         r = res[i]
         written = json.loads((tmp_path / "labels" / f"dev-{i:04d}.json").read_text())
         assert written["status"] == r["status"]
-        s0 = sample_item(MASTER, "dev", i, 0)
+        s0 = sample_item(MASTER, "dev", i, 0, preset=P01)
         if s0.fault is None:
             assert r["status"] == "null" and len(r["attempts"]) == 1
             continue

@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from hotwell_bench.items import detection_scale, sample_item
+from hotwell_bench.presets import P01
 from hotwell_bench.run import COLUMNS, run_cached, run_items
 from hotwell_bench.secrecy import REPO_ROOT
 from hotwell_bench.taxonomy import FAULT_CATEGORIES
@@ -40,7 +41,7 @@ def select(master: int, split: str, cats: tuple[str, ...], per_cat: int, nulls: 
     want_null = nulls
     out = []
     for i in range(limit):
-        it = sample_item(master, split, i)
+        it = sample_item(master, split, i, preset=P01)
         c = None if it.fault is None else it.fault.category
         if c is None and want_null > 0:
             out.append(it)
