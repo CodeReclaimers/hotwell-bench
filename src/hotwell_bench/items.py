@@ -231,31 +231,57 @@ def _sample_fault(g: np.random.Generator, category: str, component: str,
         return Fault(**common, shape="step", params={})
 
     assert mechanism == SENSOR_MECHANISM
-    kinds = preset.sensor_kinds
+    kinds = sensor_kinds_for(target, preset)
     kind = kinds[min(int(u[5] * len(kinds)), len(kinds) - 1)]
-    d_i = detection_scale(target)
+    if preset.sensor_bias_thresholds is None:
+        d_i, d_src = detection_scale(target), "D_i = max(3 sigma, 2 LSB)"
+    else:
+        d_i, d_src = preset.sensor_bias_thresholds[target]
     sign = 1.0 if u[6] < 0.5 else -1.0
     if kind == "bias":
         b = sign * ratio * d_i
         return Fault(**common, shape="step", params={"kind": "bias", "bias": b},
                      sensor_kind=kind, magnitude=b, threshold=d_i,
-                     threshold_source="D_i = max(3 sigma, 2 LSB)")
+                     threshold_source=d_src)
     if kind == "drift":
         b = sign * ratio * d_i
         t_reach = logu(u[7], *preset.sensor_drift_time_s)
         return Fault(**common, shape="ramp",
                      params={"kind": "drift", "rate": b / t_reach, "max_bias": abs(b)},
                      sensor_kind=kind, magnitude=b, threshold=d_i,
-                     threshold_source="D_i = max(3 sigma, 2 LSB)")
+                     threshold_source=d_src)
     if kind == "stuck":
         return Fault(**common, shape="step", params={"kind": "stuck"}, sensor_kind=kind)
     if kind == "lag":
         tau = logu(u[4], *preset.sensor_lag_tau_s)
         return Fault(**common, shape="step", params={"kind": "lag", "tau_s": tau},
                      sensor_kind=kind, magnitude=tau)
-    factor = logu(u[4], *preset.sensor_noise_factor)
+    if preset.sensor_noise_thresholds is None:
+        factor = logu(u[4], *preset.sensor_noise_factor)
+        return Fault(**common, shape="step",
+                     params={"kind": "noise_increase", "factor": factor},
+                     sensor_kind=kind, magnitude=factor)
+    n_thr, n_src = preset.sensor_noise_thresholds[target]
+    # B2-Q14: the excess factor scales like any other magnitude; u[1] is `ratio`
+    factor = 1.0 + ratio * (n_thr - 1.0)
     return Fault(**common, shape="step", params={"kind": "noise_increase", "factor": factor},
-                 sensor_kind=kind, magnitude=factor)
+                 sensor_kind=kind, magnitude=factor - 1.0, threshold=n_thr - 1.0,
+                 threshold_source=n_src)
+
+
+def sensor_kinds_for(instrument: str, preset: Preset) -> tuple[str, ...]:
+    """The sensor fault kinds sampled on `instrument` (B2-Q15): `preset.sensor_kinds`,
+    less any kind whose sweep threshold is None there."""
+    out = []
+    for k in preset.sensor_kinds:
+        if k in ("bias", "drift") and preset.sensor_bias_thresholds is not None:
+            if preset.sensor_bias_thresholds[instrument][0] is None:
+                continue
+        if k == "noise_increase" and preset.sensor_noise_thresholds is not None:
+            if preset.sensor_noise_thresholds[instrument][0] is None:
+                continue
+        out.append(k)
+    return tuple(out)
 
 
 def sample_item(master_seed: int, split: str, index: int, attempt: int = 0, *,
