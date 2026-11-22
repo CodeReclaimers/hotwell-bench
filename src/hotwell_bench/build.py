@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 import yaml
 from hotwell.plant import load_config
 from hotwell.procedures import load_procedures, validate
@@ -54,9 +55,30 @@ def nonvital_p0_at_rated() -> float:
     return float(sim.plant.loads.nonvital.p0)
 
 
+def mw_breakpoints(item: ItemRecord) -> list[tuple[float, float]]:
+    """(t, MW) breakpoints of the day's load: the profile, plus any load-excursion
+    decoys superposed. Without excursions this is exactly `profile.breakpoints()`."""
+    bp = item.profile.breakpoints()
+    exc = [d for d in item.decoys if d.kind == "load_excursion"]
+    if not exc:
+        return bp
+    deltas = []
+    for d in exc:
+        t0, r, h, mw = float(d.t_s), d.params["ramp_s"], d.params["hold_s"], d.params["mw"]
+        deltas.append([(t0, 0.0), (t0 + r, -mw), (t0 + r + h, -mw), (t0 + 2 * r + h, 0.0)])
+    ts = sorted({t for t, _ in bp} | {t for x in deltas for t, _ in x})
+    out = []
+    for t in ts:
+        m = float(np.interp(t, *zip(*bp, strict=True)))
+        for x in deltas:
+            m += float(np.interp(t, *zip(*x, strict=True), left=0.0, right=0.0))
+        out.append((t, round(m, 6)))
+    return out
+
+
 def _profile_events(item: ItemRecord, nv0: float) -> list[dict]:
     ev = []
-    bp = item.profile.breakpoints()
+    bp = mw_breakpoints(item)
     for (t0, m0), (t1, m1) in zip(bp, bp[1:], strict=False):
         if m1 != m0:
             ev.append({"t": t0, "type": "set_load", "target": "nonvital",
@@ -113,6 +135,16 @@ def operator_schedule(item: ItemRecord) -> list[tuple[float, str, dict]]:
         sched.append((float(op.cp_swap_s), *CP_SWAP))
     if op.fp_swap_s is not None:
         sched.append((float(op.fp_swap_s), *FP_SWAP))
+    for d in item.decoys:                       # PLAN-bench-0.2.md §3.2
+        if d.kind == "pump_swap_back":
+            pid, fwd = CP_SWAP if d.params["pair"] == "cp" else FP_SWAP
+            if d.params["swap_s"] is not None:
+                sched.append((float(d.params["swap_s"]), pid, dict(fwd)))
+            sched.append((float(d.params["back_s"]), pid,
+                          {"from": fwd["to"], "to": fwd["from"]}))
+        elif d.kind == "trim_burst":
+            sched += [(float(d.t_s + i * d.params["gap_s"]), TRIM, {})
+                      for i in range(d.params["n"])]
     sched.sort(key=lambda s: s[0])          # stable sort keeps the tie order above
     procs = load_procedures()
     for _, pid, params in sched:

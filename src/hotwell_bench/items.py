@@ -43,6 +43,10 @@ from hotwell_bench.taxonomy import (
 SCHEMA = "hotwell-bench/item/1"
 SPLIT_IDS = {"dev": 1, "test": 2}
 _TAG_STRUCTURE, _TAG_DETAIL = 0, 1
+#: decoy streams (P02 on): presence and kinds are attempt-independent, like the
+#: STRUCTURE stream; placement and sizes are per attempt, like DETAIL. Separate
+#: streams, so presets without decoys draw exactly as before.
+_TAG_DECOY_STRUCTURE, _TAG_DECOY_DETAIL = 2, 3
 _SPEC = {s.name: s for s in OBSERVATION_SPEC}
 
 
@@ -101,6 +105,15 @@ class Fault:
 
 
 @dataclass(frozen=True)
+class Decoy:
+    """A non-fault event (PLAN-bench-0.2.md §3.2). `kind` is one of presets.DECOY_KINDS;
+    `t_s` is its start; `params` are kind-specific (see presets.DecoyParams)."""
+    kind: str
+    t_s: int
+    params: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ItemRecord:
     schema: str
     split: str
@@ -110,13 +123,21 @@ class ItemRecord:
     profile: DayProfile
     operator: OperatorPlan
     fault: Fault | None
+    #: omitted from to_dict() when empty, so items without decoys (all of 0.1)
+    #: serialize exactly as before
+    decoys: tuple[Decoy, ...] = ()
 
     @property
     def item_id(self) -> str:
         return f"{self.split}-{self.index:04d}"
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if not self.decoys:
+            del d["decoys"]
+        else:
+            d["decoys"] = [asdict(x) for x in self.decoys]
+        return d
 
     def to_json(self) -> str:
         """Canonical JSON (sorted keys): the byte form hashed and stored in keys."""
@@ -133,7 +154,8 @@ class ItemRecord:
         return cls(schema=d["schema"], split=d["split"], index=d["index"],
                    attempt=d["attempt"], sim_seed=d["sim_seed"],
                    profile=DayProfile(**d["profile"]), operator=OperatorPlan(**d["operator"]),
-                   fault=None if f is None else Fault(**f))
+                   fault=None if f is None else Fault(**f),
+                   decoys=tuple(Decoy(**x) for x in d.get("decoys", ())))
 
     @classmethod
     def from_json(cls, s: str) -> ItemRecord:
@@ -308,5 +330,83 @@ def sample_item(master_seed: int, split: str, index: int, attempt: int = 0, *,
     profile = _sample_profile(d, preset)
     operator = _sample_operator(d, preset)
     fault = _sample_fault(d, category, component, preset)  # drawn even for null items (fixed count)
+    decoys: tuple[Decoy, ...] = ()
+    if preset.decoys is not None:
+        decoys = _sample_decoys(_rng(master_seed, sid, index, _TAG_DECOY_STRUCTURE),
+                                _rng(master_seed, sid, index, _TAG_DECOY_DETAIL, attempt),
+                                profile, operator, preset)
     return ItemRecord(SCHEMA, split, index, attempt, sim_seed, profile, operator,
-                      None if null else fault)
+                      None if null else fault, decoys)
+
+
+def _allowed_starts(intervals: list[tuple[float, float]], u: float) -> float:
+    """Map u in [0, 1) onto the union of disjoint [a, b) intervals, uniformly."""
+    total = sum(b - a for a, b in intervals)
+    x = u * total
+    for a, b in intervals:
+        if x < b - a:
+            return a + x
+        x -= b - a
+    return intervals[-1][1]
+
+
+def _sample_decoys(gs: np.random.Generator, gd: np.random.Generator, profile: DayProfile,
+                   operator: OperatorPlan, preset: Preset) -> tuple[Decoy, ...]:
+    """Fixed draw counts: 4 from gs (presence, two?, kind 1, kind 2), 2 × 5 from gd
+    (one block per decoy slot, used or not). Independent of the fault (B2-Q13)."""
+    dp = preset.decoys
+    u_has, u_two, u_k1, u_k2 = gs.random(4)
+    blocks = gd.random((2, 5))
+    if u_has >= dp.p_decoy:
+        return ()
+    kinds = list(dp.kinds)
+    k1 = kinds.pop(min(int(u_k1 * len(kinds)), len(kinds) - 1))
+    chosen = [k1]
+    if u_two < dp.p_two:
+        chosen.append(kinds[min(int(u_k2 * len(kinds)), len(kinds) - 1)])
+    out = [_place_decoy(k, blocks[n], profile, operator, dp) for n, k in enumerate(chosen)]
+    return tuple(sorted(out, key=lambda x: (x.t_s, x.kind)))
+
+
+def _place_decoy(kind: str, u: np.ndarray, profile: DayProfile, operator: OperatorPlan,
+                 dp) -> Decoy:
+    def unif(x, lo, hi):
+        return lo + x * (hi - lo)
+
+    def unif_int(x, lo, hi):
+        return int(lo + min(int(x * (hi - lo + 1)), hi - lo))
+
+    if kind == "load_excursion":
+        mw = round(unif(u[0], *dp.excursion_mw), 1)
+        ramp = float(round(unif(u[1], *dp.excursion_ramp_s)))
+        hold = float(round(unif(u[2], *dp.excursion_hold_s)))
+        span = 2 * ramp + hold
+        lo, hi = dp.edge_s, P.DAY_S - dp.edge_s - span
+        if profile.flat:
+            iv = [(lo, hi)]
+        else:
+            bp = profile.breakpoints()
+            t_down, t_up_end = bp[1][0], bp[4][0]
+            a, b = t_down - dp.trough_margin_s - span, t_up_end + dp.trough_margin_s
+            iv = [(x, y) for x, y in ((lo, min(hi, a)), (max(lo, b), hi)) if y > x]
+        assert iv, "no room for a load excursion"
+        t = int(_allowed_starts(iv, u[3]))
+        return Decoy(kind, t, {"mw": mw, "ramp_s": ramp, "hold_s": hold})
+
+    if kind == "pump_swap_back":
+        pair = "cp" if u[0] < 0.5 else "fp"
+        back = unif_int(u[1], *dp.swap_back_s)
+        base = operator.cp_swap_s if pair == "cp" else operator.fp_swap_s
+        if base is not None:
+            return Decoy(kind, base + back, {"pair": pair, "swap_s": None,
+                                             "back_s": base + back})
+        # the decoy's own swap: inside the day edges, with room for the swap back
+        swap = unif_int(u[2], int(dp.edge_s), int(P.DAY_S - dp.edge_s - dp.swap_back_s[1]))
+        return Decoy(kind, swap, {"pair": pair, "swap_s": swap, "back_s": swap + back})
+
+    assert kind == "trim_burst", kind
+    n = unif_int(u[0], *dp.trim_burst_n)
+    gap = unif_int(u[1], *dp.trim_burst_gap_s)
+    t = unif_int(u[2], int(dp.edge_s), int(P.DAY_S - dp.edge_s - n * gap))
+    return Decoy(kind, t, {"n": n, "gap_s": gap})
+
