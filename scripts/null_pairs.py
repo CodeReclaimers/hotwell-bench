@@ -19,8 +19,9 @@ Modes:
   - Replay runs are cached in `<cache>/replay/`, keyed by A, B, the environment and
     RUNNER_VERSION.
 
-The split is fixed before any data is seen: even k calibrate the threshold and odd k
-validate it.
+Roles (`role`): pairs k < 200 with even k calibrate and odd k validate; pairs k ≥ 200
+are a fresh validation set, added before their runs because the odd pairs were looked
+at during the 2026-11-19/21 diagnoses.
 
 For each pair and each instrument, and each window W in WINDOWS_S with sustain S, the
 statistic is
@@ -63,7 +64,7 @@ from hotwell_bench.secrecy import REPO_ROOT
 #: Public calibration master seed. It differs from the dev master (20261107) and is
 #: used only for threshold calibration, never for a split.
 CAL_MASTER = 2026111901
-WINDOWS_S = (300, 600, 1200)
+WINDOWS_S = (10, 60, 300, 600, 1200, 3600)
 SUSTAIN_S = 60
 
 
@@ -108,6 +109,15 @@ def _replay_task(args) -> tuple[str, str, dict]:
     B = ItemRecord.from_json(b_json)
     res = run_replay(ItemRecord.from_json(a_json), B, cache)
     return B.item_id, "replay", res.summary
+
+
+def role(k: int) -> str:
+    """Fixed before data: k < 200 even calibrate, k < 200 odd validate (seen during the
+    2026-11-19/21 diagnoses), k >= 200 are fresh validation (added 2026-11-21, before
+    their runs)."""
+    if k >= 200:
+        return "fresh_validation"
+    return "calibration" if k % 2 == 0 else "validation"
 
 
 def parse_range(s: str) -> list[int]:
@@ -176,7 +186,7 @@ def main() -> int:
         rb = (run_replay(A, B, a.cache) if a.mode == "replay"
               else run_cached(B, "faulted", a.cache))
         s = pair_stats(ra.values, rb.values)
-        s.update(role="calibration" if k % 2 == 0 else "validation",
+        s.update(role=role(k),
                  seeds=[A.sim_seed, B.sim_seed], flat=A.profile.flat,
                  cp_swap_s=A.operator.cp_swap_s, fp_swap_s=A.operator.fp_swap_s,
                  dead=[ra.summary["plant_dead"], rb.summary["plant_dead"]])
