@@ -152,9 +152,10 @@ def main() -> int:
         f"STRICT_Z = {zs!r}",
         f"STRICT_FIRES = {cs!r}",
         "STRICT_THETA = {",
-        *[f"    {w}: {{" + ", ".join(f"{c!r}: {float(t)!r}" for c, t in
-                                     zip(COLUMNS, ths[j], strict=True)) + "},"
-          for j, w in enumerate(sz)],
+        *[line for j, w in enumerate(sz) for line in (
+            [f"    {w}: {{"]
+            + [f"        {c!r}: {float(t)!r}," for c, t in zip(COLUMNS, ths[j], strict=True)]
+            + ["    },"])],
         "}",
         "",
     ]

@@ -126,3 +126,53 @@ def test_strict_stratum_ignores_the_per_sample_level_rule():
         if strict_obs:
             assert st["rule"] == "window_10" and st["t_det"] == 2007
             assert "level" not in st["per_rule"] and "window" not in st["per_rule"]
+
+
+# ------------------------------------------- G-B2w: seeded simulator cases under P02
+
+def _label_p02(fault, until):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_b3_label import _item
+
+    from hotwell_bench.build import build
+    from hotwell_bench.presets import P02
+    from hotwell_bench.run import run_built
+    b = build(_item(fault))
+    fa, tw = run_built(b, "faulted", until=until), run_built(b, "twin", until=until)
+    return L.label_runs(b.item, fa, tw, preset=P02)
+
+
+def test_gb2w_sub_d_bias_caught_by_window_not_by_level():
+    """G-B2w (PLAN-bench-0.2.md §8) on the calibrated P02 thresholds.
+    - The instrument is cp1_current: an indication that no controller reads, so a
+      sensor bias changes nothing but its own reading. A biased controlled measurement
+      such as drum_pressure moves the plant, and the level rule then rightly fires on
+      another instrument (first version of this test, 2026-11-22).
+    - A bias of 1.5 θ is below the per-sample bound D_i (θ/D_i ≈ 0.45), so the level
+      rule misses it. The windowed trailing mean crosses θ after about W·θ/b = 400
+      samples.
+    - A bias of 0.5 θ is never caught."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_b3_label import fault_for
+
+    from hotwell_bench.presets import P02
+    inst = "cp1_current"
+    th, d = P02.window_thresholds[inst], float(L.SCALE[COLUMNS.index(inst)])
+    t_inj = 1200                 # past one full window, so the crossing is not the run start
+    for k, caught in ((1.5, True), (0.5, False)):
+        f = fault_for("sensor_fault", inst, t_inj, {"kind": "bias", "bias": k * th}, "bias")
+        lab = _label_p02(f, 2400)
+        print(f"\nbias {k} θ = {k * th:.3f} A (θ {th:.3f}, D_i {d:.2f}): t_det {lab.t_det} "
+              f"({lab.rule}, {lab.instrument}); level hits {lab.per_rule['level']}; "
+              f"strict {lab.strict['t_det']} ({lab.strict['rule']})")
+        assert k * th < d and not lab.per_rule["level"]
+        if caught:
+            assert lab.observable and lab.rule == "window" and lab.instrument == inst
+            # 400 samples ± quantization (LSB 0.5 A, dithered by σ 0.5 A)
+            assert t_inj + 350 <= lab.t_det <= t_inj + 450
+        else:
+            assert not lab.observable and lab.t_det is None

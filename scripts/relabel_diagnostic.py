@@ -9,6 +9,9 @@ files and the run cache. Only `label.label_runs` is re-applied:
   0.1 accepted, never merge them.
 Nothing is written.
 
+The `strict` column is the strict stratum's t_det − t_inj ("-": not visible on any single
+instrument), for presets that record it.
+
 Usage: python scripts/relabel_diagnostic.py --labels out/labels/dev --cache cache --preset P02
 """
 from __future__ import annotations
@@ -45,17 +48,24 @@ def main() -> int:
         d = None if new.t_det is None else new.t_det - old["t_det"]
         if d:
             moved.append(d)
+        st = None if new.strict is None else new.strict["t_det"]
         rows.append((it.item_id, it.fault.category, it.fault.shape, old["t_inj"],
-                     old["t_det"], old["rule"], new.t_det, new.rule, new.instrument, d))
+                     old["t_det"], old["rule"], new.t_det, new.rule, new.instrument, d, st))
     print(f"{'item':10s} {'category':28s} {'shape':5s} {'t_inj':>6s} {'old t_det':>9s} "
-          f"{'rule':8s} {'new t_det':>9s} {'rule':8s} {'instrument':16s} {'shift':>7s}")
+          f"{'rule':8s} {'new t_det':>9s} {'rule':8s} {'instrument':16s} {'shift':>7s} "
+          f"{'strict':>7s}")
     for x in rows:
         print(f"{x[0]:10s} {x[1]:28s} {x[2]:5s} {x[3]:6d} {x[4]:9d} {x[5]:8s} "
-              f"{x[6]:9d} {x[7]:8s} {x[8]:16s} {x[9]:7d}")
+              f"{x[6]:9d} {x[7]:8s} {x[8]:16s} {x[9]:7d} "
+              f"{'-' if x[10] is None else x[10] - x[3]:>7}")
     n = len(rows)
     moved.sort()
     print(f"\naccepted items: {n}; t_det moved: {len(moved)} (all earlier: "
           f"{all(d < 0 for d in moved)}); new t_det rule shares: {dict(rules_new)}")
+    if preset.strict_windows_s is not None:
+        un = [x for x in rows if x[10] is None]
+        print(f"strict stratum: not visible on any single instrument: {len(un)} of {n} "
+              f"({sum(x[2] == 'ramp' for x in un)} ramps) {[x[0] for x in un]}")
     if moved:
         print(f"shift [s] min / median / max: {moved[0]} / {moved[len(moved) // 2]} / "
               f"{moved[-1]}")
