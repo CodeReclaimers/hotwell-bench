@@ -347,3 +347,12 @@ Answered by Alan, 2026-11-22, after the C2 sweep (`scripts/window_sweep.py`, pro
 | B2-Q10 | Idle, clipped-at-zero instruments (standby pump currents, makeup flow and valve) have swept bias thresholds below 1 LSB, caught only by the variance rule. | Floor every sensor-bias threshold at 1 LSB. Rejected: a labeller change; keeping D_i as the bias scale everywhere. |
 | B2-Q11 | A frequency bias is never detected (the control loop cancels the reading's bias). | Do not sample frequency for sensor bias or drift (wired in C3). |
 | B2-Q12 | The 1 h sweep horizon binds on tube_leak. | Keep 1 h, the 0.1 definition; the table errs toward larger faults there. Rejected: a longer tube_leak-only sweep. |
+
+Answered by Alan, 2026-11-22, at the start of C3:
+
+| ID | Question | Decision |
+|---|---|---|
+| B2-Q13 | §3.2 put decoys on null days only, so a recognized decoy would imply a `none` key. | Decoys on fault and null days alike: each item carries decoys with the same probability, independent of the fault draw. This replaces "one third of null items" in §3.2. Labels stay valid because decoys are in both the faulted run and its twin. |
+| B2-Q14 | noise_increase magnitude (0.1: factor 2–10, never swept). | factor = 1 + r·(thr_i − 1), with r from `MAG_RANGE` and thr_i from the C2 sweep. |
+| B2-Q15 | A `frequency` instrument fault whose kind draw is bias or drift (B2-Q11). | Restrict that instrument's kinds: the same draw picks among the kinds that have a threshold (stuck, noise_increase). |
+| B2-Q16 | A shift-log note for load-excursion decoys? | No notes. A load excursion shows only in the telemetry, as the daily trough does. This resolves the §3.3 open point: 0.2 has no operator notes. |
