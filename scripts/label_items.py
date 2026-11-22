@@ -2,8 +2,11 @@
 """Label a range of indices (runs, regeneration, confusers) and print the report.
 
 Usage:
-    python scripts/label_items.py (--master N | --master-seed-file PATH) --split dev
-        --indices 0-49 [--workers W] [--cache DIR] [--out DIR] [--cap K]
+    python scripts/label_items.py (--master N | --master-seed-file PATH) --preset P
+        --split dev --indices 0-49 [--workers W] [--cache DIR] [--out DIR] [--cap K]
+
+--preset (required, no default) names the generation preset (presets.PRESETS); it is
+recorded in run.json, and package_split.py packages with that preset's bench version.
 
 Test-split use requires --cache and --out outside any git work tree (secrecy guard),
 and the seed from --master-seed-file: a seed given with --master is on the process
@@ -27,7 +30,7 @@ import time
 from pathlib import Path
 
 from hotwell_bench.pipeline import ATTEMPT_CAP, label_indices, summarize
-from hotwell_bench.presets import P01
+from hotwell_bench.presets import PRESETS
 from hotwell_bench.provenance import check_environment
 from hotwell_bench.secrecy import REPO_ROOT
 
@@ -61,6 +64,7 @@ def main() -> int:
     seed = ap.add_mutually_exclusive_group(required=True)
     seed.add_argument("--master", type=int, help="master seed (dev only)")
     seed.add_argument("--master-seed-file", help="file holding the master seed")
+    ap.add_argument("--preset", required=True, choices=sorted(PRESETS))
     ap.add_argument("--split", default="dev", choices=["dev", "test"])
     ap.add_argument("--indices", required=True)
     ap.add_argument("--workers", type=int, default=None)
@@ -78,13 +82,14 @@ def main() -> int:
     env = check_environment()
     record = {"environment": env, "platform": platform.platform(),
               "python": platform.python_version(), "bench": bench_commit(),
-              "split": a.split, "indices": a.indices, "cap": a.cap,
+              "preset": a.preset, "split": a.split, "indices": a.indices, "cap": a.cap,
               "master_sha256": hashlib.sha256(str(master).encode()).hexdigest(),
               "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     print(f"environment OK: hotwell {env['hotwell']['commit_id'][:12]}, numpy "
           f"{env['numpy']}, bench {record['bench']}", flush=True)
     res = label_indices(master, a.split, parse_range(a.indices), cache, out,
-                        workers=a.workers, cap=a.cap, preset=P01)
+                        workers=a.workers, cap=a.cap,
+                        preset=PRESETS[a.preset])
     record["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     (Path(out) / "run.json").write_text(json.dumps(record, indent=1, sort_keys=True))
     print(summarize(res), flush=True)

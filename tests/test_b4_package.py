@@ -35,7 +35,7 @@ def runs(tmp_path_factory):
     fault = gb2_items()[3]
     items = [null, fault]
     run_items(items, cache, workers=2, until=UNTIL)
-    results, rr = {}, {}
+    results, rr, twins = {}, {}, {}
     for n, it in enumerate(items):
         fa = run_cached(it, "faulted", cache, until=UNTIL)
         tw = run_cached(it, "twin", cache, until=UNTIL)
@@ -47,13 +47,14 @@ def runs(tmp_path_factory):
                       "accepted_answers": [{"category": "none" if f is None else f.category,
                                             "component": None if f is None else f.component}]}
         rr[n] = fa
+        twins[n] = tw
     seeds = {r["item"]["sim_seed"] for r in results.values()} | {20261107}
-    return results, rr, seeds
+    return results, rr, seeds, twins
 
 
 def _package(tmp: Path, runs) -> Path:
-    results, rr, _ = runs
-    K.package_split("dev", results, rr, tmp, PROV, GUID)
+    results, rr, _, _ = runs
+    K.package_split("dev", results, rr, tmp, PROV, GUID, version="0.1")
     return tmp / "dev"
 
 
@@ -79,7 +80,7 @@ def test_formats():
 
 
 def test_task_statement_is_clean_and_complete():
-    t = K.task_md(CANARY).decode()
+    t = K.task_md(CANARY, "0.1").decode()
     hits = [m.group(0) for m in K._token_re(K.forbidden_tokens()).finditer(t)]
     print(f"\ntask.md {len(t)} chars; forbidden hits {hits}")
     assert not hits
@@ -151,6 +152,10 @@ def _mutations():
         "item task.md edited": (item_append("task.md", "hint\n"), "differs"),
         "extra column": (rewrite_csv(lambda s: s.replace("t_s,", "t_s,fault,", 1)), "header"),
         "text in csv body": (rewrite_csv(lambda s: s + "1,pump_degrade\n"), "non-numeric"),
+        "decoy kind in shift log": (item_append("shift_log.txt",
+                                    "12:00:00.00  NOP-03 done: trim_burst\n"), "forbidden"),
+        "decoy parameter in shift log": (item_append("shift_log.txt",
+                                         "12:00:00.00  NOP-01 done: back_s\n"), "forbidden"),
         "canary missing": (drop_canary, "canary"),
         "extra file": (extra_file, "files"),
     }
@@ -175,6 +180,42 @@ def test_mutation_fails_the_scan(tmp_path, runs, name):
 
 
 def test_test_split_package_is_refused_inside_the_repository(runs):
-    results, rr, _ = runs
+    results, rr, _, _ = runs
     with pytest.raises(PermissionError):
-        K.package_split("test", results, rr, REPO_ROOT / "out" / "pkg", PROV, GUID)
+        K.package_split("test", results, rr, REPO_ROOT / "out" / "pkg", PROV, GUID,
+                        version="0.1")
+
+
+
+def test_v02_package_text_keys_and_scan(tmp_path, runs):
+    """C4 (PLAN-bench-0.2.md §5): a split labelled under P02 packages as bench 0.2.
+    task.md carries the 0.2 load sentence; every key has `decoys`; fault keys carry
+    `strata.strict_observable`; the manifest records the version; the scan passes,
+    re-packaging is byte-identical, and a 0.1 task.md inside a 0.2 split is flagged."""
+    from hotwell_bench.items import ItemRecord
+    from hotwell_bench.presets import P02
+    results, rr, seeds, twins = runs
+    r2 = {}
+    for n, r in results.items():
+        it = ItemRecord.from_json(json.dumps(r["item"]))
+        r2[n] = dict(r, label=label_runs(it, rr[n], twins[n], preset=P02).to_dict())
+    dirs = []
+    for sub in ("a", "b"):
+        K.package_split("dev", r2, rr, tmp_path / sub, PROV, GUID, version="0.2")
+        dirs.append(tmp_path / sub / "dev")
+    a, b = dirs
+    problems = K.leak_scan(a, seeds, GUID)
+    man = json.loads((a / "manifest.json").read_text())
+    task = (a / "task.md").read_text()
+    keys = {p.name: json.loads(p.read_text()) for p in (a / "keys").glob("dev-*.json")}
+    print(f"\n0.2 package: scan {problems}; bench_version {man.get('bench_version')}; keys "
+          + "; ".join(f"{k}: decoys {v['decoys']} strata {v.get('strata')}"
+                      for k, v in sorted(keys.items())))
+    assert problems == [] and _hashes(a) == _hashes(b)
+    assert man["bench_version"] == "0.2" and "customer demand" in task
+    assert task.encode() == K.task_md(CANARY, "0.2") != K.task_md(CANARY, "0.1")
+    assert all(v["decoys"] == [] for v in keys.values())
+    assert all("strict_observable" in v["strata"] for v in keys.values() if v["fault_present"])
+    p = next(p for p in sorted((a / "items").iterdir())) / "task.md"
+    p.write_bytes(K.task_md(CANARY, "0.1"))
+    assert any("differs" in x for x in K.leak_scan(a, seeds, GUID))

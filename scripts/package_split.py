@@ -13,6 +13,10 @@ Provenance comes from <labels>/run.json when present. The dev pilot predates
 run.json, so its provenance is the current environment plus the commit that
 labelled it, passed with --labels-commit.
 
+The bench version (package.BENCH_VERSION) follows the preset recorded in run.json.
+Labels without a recorded preset (the 0.1 pilot, and every 0.1 run, which predate
+--preset) are P01, i.e. version 0.1.
+
 --canary-file holds the release's canary GUID (kept outside git; plan §8.1).
 
 With --master-seed-file, the seed is added to the scan's forbidden seeds and the
@@ -61,7 +65,11 @@ def main() -> int:
                 "python": platform.python_version(),
                 "bench": {"commit": a.labels_commit, "dirty": False,
                           "note": "labelled before run.json existed"}}
-    prov = {k: prov[k] for k in ("environment", "platform", "python", "bench")}
+    preset = prov.get("preset", "P01")
+    version = K.BENCH_VERSION[preset]
+    prov = {k: prov[k] for k in ("environment", "platform", "python", "bench", "preset")
+            if k in prov}
+    print(f"preset {preset}: bench version {version}", flush=True)
     results, runs = {}, {}
     for p in sorted(labels.glob(f"{a.split}-*.json")):
         r = json.loads(p.read_text())
@@ -76,7 +84,7 @@ def main() -> int:
         seeds.add(int(Path(a.master_seed_file).read_text().strip()))
     if a.master is not None:
         seeds.add(a.master)
-    man = K.package_split(a.split, results, runs, a.out, prov, guid)
+    man = K.package_split(a.split, results, runs, a.out, prov, guid, version=version)
     split_dir = Path(a.out) / a.split
     tar = subprocess.run(["git", "-C", a.hotwell_repo, "archive", PINNED_HOTWELL_TAG,
                           "docs/manual"], check=True, capture_output=True).stdout

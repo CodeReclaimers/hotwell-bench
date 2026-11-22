@@ -31,7 +31,7 @@ repository.
 
 | Stage | Entry point | Output |
 |---|---|---|
-| Generate + label | `scripts/label_items.py --master N --split S --indices 0-199` | `<out>/<split>-NNNN.json` per index (item record, label, confusers, accepted answers) + `run.json` |
+| Generate + label | `scripts/label_items.py --master N --preset P --split S --indices 0-199` | `<out>/<split>-NNNN.json` per index (item record, label, confusers, accepted answers) + `run.json` |
 | Package + leak scan | `scripts/package_split.py --split S --labels L --cache C --out DIR --canary-file G` | `DIR/<split>/` (below); exit 1 if the leak scan finds anything |
 | Verify | `scripts/verify_release.py DIR/<split> [--regenerate N]` | integrity vs manifest; optional re-simulation of N items |
 | Grade | `scripts/grade.py --keys DIR/<split>/keys --answers ANS [--out graded.json]` | report table; per-item JSON |

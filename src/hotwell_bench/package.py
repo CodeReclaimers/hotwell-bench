@@ -54,11 +54,26 @@ from hotwell.protection.tables import load_protection_table
 from hotwell.scenario import EVENT_TYPES
 from hotwell.sensors import OBSERVATION_SPEC
 
+from hotwell_bench.presets import DECOY_KINDS
 from hotwell_bench.run import COLUMNS, RunResult
 from hotwell_bench.secrecy import check_output_path
 from hotwell_bench.taxonomy import CATEGORIES, FAULT_CATEGORIES, NULL_CATEGORY, plantwide
 
 PACKAGE_SCHEMA = "hotwell-bench/package/1"
+#: bench version of a preset's packaged text (task.md, README) and key fields. P01
+#: packages exactly as 0.1 did (G-B0r); P02 adds the 0.2 changes (PLAN-bench-0.2.md §5).
+BENCH_VERSION = {"P01": "0.1", "P02": "0.2"}
+VERSIONS = ("0.1", "0.2")
+_LOAD_TEXT = {
+    "0.1": """condensate pumps (CP-1, CP-2) and two feed pumps (FP-1, FP-2). The unit carries a
+load that may follow a daily profile. The operator runs routine procedures (frequency
+trims, pump swaps), recorded in the shift log.""",
+    # Alan, 2026-11-22 (C3 report): load-excursion decoys are not a daily profile
+    "0.2": """condensate pumps (CP-1, CP-2) and two feed pumps (FP-1, FP-2). The unit's load
+follows customer demand: usually a daily profile, sometimes other changes. The
+operator runs routine procedures (frequency trims, pump swaps), recorded in the shift
+log.""",
+}
 # The canary GUID is a run-time input, never in git: a GUID published with the code
 # could be learned from the code, and finding it in a model's output would then not
 # show that the data leaked (PLAN §8.1, Alan 2026-11-08). It is stored with the release.
@@ -174,7 +189,7 @@ def _taxonomy_md() -> str:
     return "\n".join(rows)
 
 
-def task_md(canary: str) -> bytes:
+def task_md(canary: str, version: str) -> bytes:
     instruments = "\n".join(f"- `{c}` [{_SPEC[c].units}]: {_SPEC[c].description}"
                             for c in COLUMNS)
     text = f"""<!-- {canary} -->
@@ -182,9 +197,7 @@ def task_md(canary: str) -> bytes:
 
 You are given the records of one day (24 h, clock starting at 00:00:00) of a small
 drum-boiler steam plant with a turbine-generator, condenser, deaerator, two
-condensate pumps (CP-1, CP-2) and two feed pumps (FP-1, FP-2). The unit carries a
-load that may follow a daily profile. The operator runs routine procedures (frequency
-trims, pump swaps), recorded in the shift log.
+{_LOAD_TEXT[version]}
 
 During the day **at most one** fault began. It may be a plant equipment fault or a
 fault in one instrument. It may start abruptly or develop gradually. The day may have
@@ -245,8 +258,13 @@ instrument misreads (offset, drift, frozen, slow or noisy) while the plant is fi
 
 # ------------------------------------------------------------------ keys
 
-def key_record(result: dict, faulted: RunResult) -> dict:
-    """The answer key of one item, from its pipeline result and faulted run."""
+def key_record(result: dict, faulted: RunResult, version: str) -> dict:
+    """The answer key of one item, from its pipeline result and faulted run.
+
+    0.2 adds (PLAN-bench-0.2.md §3.2, §6; Alan 2026-11-21 strict stratum):
+    - `decoys`: the decoy kinds on the day, on every item (empty list if none);
+    - `strata.strict_observable` on fault items: visible on a single instrument (the
+      strict stratum, label.strict). It never changes `accepted_answers`."""
     lab = result["label"]
     f = result["item"]["fault"]
     key = {"schema": PACKAGE_SCHEMA, "item_id": lab["item_id"],
@@ -263,6 +281,10 @@ def key_record(result: dict, faulted: RunResult) -> dict:
                          "ratio": (None if not f.get("threshold") or f["magnitude"] is None
                                    else abs(f["magnitude"]) / f["threshold"]),
                          "sensor_kind": f.get("sensor_kind")}
+    if version != "0.1":
+        key["decoys"] = [d["kind"] for d in result["item"].get("decoys", [])]
+        if f is not None:
+            key["strata"]["strict_observable"] = lab["strict"]["observable"]
     return key
 
 
@@ -272,27 +294,27 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def item_files(res: RunResult, canary: str) -> dict[str, bytes]:
+def item_files(res: RunResult, canary: str, version: str) -> dict[str, bytes]:
     return {"instruments.csv.gz": gz(instruments_csv(res, canary)),
             "events.csv": events_csv(res, canary),
-            "shift_log.txt": shift_log_txt(res, canary), "task.md": task_md(canary)}
+            "shift_log.txt": shift_log_txt(res, canary), "task.md": task_md(canary, version)}
 
 
 def package_item(result: dict, faulted: RunResult, split_dir: Path,
-                 canary: str) -> dict[str, str]:
+                 canary: str, version: str) -> dict[str, str]:
     """Write one item's files and key; returns {relative path: sha256} of the item files."""
     iid = result["label"]["item_id"]
     idir = split_dir / "items" / iid
     idir.mkdir(parents=True, exist_ok=True)
     out = {}
-    for name, data in item_files(faulted, canary).items():
+    for name, data in item_files(faulted, canary, version).items():
         (idir / name).write_bytes(data)
         out[f"items/{iid}/{name}"] = _sha(data)
     _, _, arr = parse_instruments(gzip.decompress((idir / "instruments.csv.gz").read_bytes()))
     check_lossless(arr, faulted)
     kdir = split_dir / "keys"
     kdir.mkdir(parents=True, exist_ok=True)
-    (kdir / f"{iid}.json").write_text(json.dumps(key_record(result, faulted), indent=1,
+    (kdir / f"{iid}.json").write_text(json.dumps(key_record(result, faulted, version), indent=1,
                                                  sort_keys=True))
     return out
 
@@ -310,9 +332,10 @@ def check_lossless(arr: np.ndarray, faulted: RunResult) -> None:
             raise ValueError(f"{faulted.item_id} {c}: packaged value differs by {err}")
 
 
-def set_readme(split: str, n_items: int, provenance: dict, canary: str) -> bytes:
+def set_readme(split: str, n_items: int, provenance: dict, canary: str,
+               version: str) -> bytes:
     return f"""<!-- {canary} -->
-# hotwell-bench 0.1 — {split} split
+# hotwell-bench {version} — {split} split
 
 {n_items} items. Each `items/<id>/` holds one day of plant data; `task.md` states the
 task and the answer format. `keys/` holds the answers and must never be shown to a
@@ -334,9 +357,13 @@ corpus, this set is contaminated.
 
 
 def package_split(split: str, results: dict[int, dict], runs: dict[int, RunResult],
-                  root: str | Path, provenance: dict, guid: str) -> dict:
+                  root: str | Path, provenance: dict, guid: str, *, version: str) -> dict:
     """Package accepted and null items of one split. Excluded-at-cap indices are skipped
-    (they have no label). Returns the manifest."""
+    (they have no label). Returns the manifest. `version` (BENCH_VERSION of the preset
+    the split was labelled with) selects the packaged text and key fields; the manifest
+    records it except for 0.1, whose manifest stays byte-identical."""
+    if version not in VERSIONS:
+        raise ValueError(f"unknown bench version {version!r}")
     canary = canary_text(guid)
     split_dir = check_output_path(Path(root) / split, split)
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -346,18 +373,21 @@ def package_split(split: str, results: dict[int, dict], runs: dict[int, RunResul
         r = results[i]
         if r["status"] == "excluded_at_cap":
             continue
-        files.update(package_item(r, runs[i], split_dir, canary))
+        files.update(package_item(r, runs[i], split_dir, canary, version))
         iid = r["label"]["item_id"]
         kb = (split_dir / "keys" / f"{iid}.json").read_bytes()
         kman[iid] = {"key_sha256": _sha(kb), "state_hash": runs[i].summary["state_hash"],
                      "observation_hash": runs[i].summary["observation_hash"]}
-    for name, data in (("task.md", task_md(canary)),
-                       ("README.md", set_readme(split, len(kman), provenance, canary))):
+    for name, data in (("task.md", task_md(canary, version)),
+                       ("README.md", set_readme(split, len(kman), provenance, canary,
+                                                version))):
         (split_dir / name).write_bytes(data)
         files[name] = _sha(data)
     manifest = {"schema": PACKAGE_SCHEMA, "split": split, "canary": guid,
                 "n_items": len(kman), "provenance": provenance,
                 "files": dict(sorted(files.items()))}
+    if version != "0.1":
+        manifest["bench_version"] = version
     (split_dir / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True))
     (split_dir / "keys" / "manifest.json").write_text(
         json.dumps({"schema": PACKAGE_SCHEMA, "split": split, "items": kman}, indent=1,
@@ -376,6 +406,8 @@ def forbidden_tokens() -> set[str]:
     params |= {"ramp_s", "rate", "max_bias", "tau_s", "factor", "kind", "bias",
                "m_dot_design", "noise_increase", "sensor_kind", "t_inj", "t_det",
                "sim_seed", "master_seed"}
+    # 0.2 decoys (PLAN-bench-0.2.md §3.2): kind and parameter names
+    params |= set(DECOY_KINDS) | {"decoys", "hold_s", "swap_s", "back_s", "gap_s"}
     params -= {"rate", "factor", "kind", "bias"}        # English words in task.md
     targets = {"frv", "lcv", "makeup_valve", "fw_valve", "da_lcv"}
     return ((set(EVENT_TYPES) - {"action"}) | set(PLANT_FAULT_TYPES) | params | targets
@@ -402,7 +434,8 @@ def leak_scan(split_dir: str | Path, seeds: set[int], guid: str) -> list[str]:
     ind_keys = _indication_keys()
     procs = set(load_procedures())
     header = instruments_header()
-    task = task_md(canary)
+    version = json.loads((split_dir / "manifest.json").read_text()).get("bench_version", "0.1")
+    task = task_md(canary, version)
 
     def text_checks(where: str, text: str) -> None:
         if canary not in text.split("\n", 1)[0]:
