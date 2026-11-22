@@ -28,6 +28,14 @@ evidence over all rules and instruments.
            day-to-day variability, far below the per-sample bound D_i for slow
            faults.
 
+Strict stratum (presets with strict_* set; Alan, 2026-11-21): the same evidence
+computed WITHOUT the per-sample level rule, with windowed rules at several
+windows (`strict_windows_s`, thresholds `strict_thresholds[W]`) in its place. It asks
+whether the fault leaves day-to-day variability on some single instrument. It is
+recorded as Label.strict and never decides observability, because an analyst can
+combine instruments (e.g. firing rate against MW out) in ways no per-instrument
+rule sees.
+
 The constants in backticks are fields of the generation preset (presets.Preset),
 passed explicitly to every rule.
 
@@ -48,6 +56,7 @@ found undetectable.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -87,14 +96,29 @@ def trailing_mean(x: np.ndarray, w: int) -> np.ndarray:
     return (c[w:] - c[:-w]) / w
 
 
-def window_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
-    w, s = preset.window_s, preset.window_sustain_s
-    theta = np.array([preset.window_thresholds[c] for c in COLUMNS])
+def _window_hits(F: np.ndarray, T: np.ndarray, w: int, s: int,
+                 thresholds: Mapping[str, float]) -> list[int | None]:
+    theta = np.array([thresholds[c] for c in COLUMNS])
     over = np.abs(trailing_mean(F - T, w)) > theta
     out: list[int | None] = []
     for i in range(F.shape[1]):
         j = _first_run_start(over[:, i], s)
         out.append(None if j is None else j + w - 1)
+    return out
+
+
+def window_rule(F: np.ndarray, T: np.ndarray, preset: Preset) -> list[int | None]:
+    return _window_hits(F, T, preset.window_s, preset.window_sustain_s,
+                        preset.window_thresholds)
+
+
+def strict_evidence(F: np.ndarray, T: np.ndarray, ev: dict, preset: Preset) -> dict:
+    """Strict-stratum evidence: `ev`'s stuck and variance rules plus one windowed rule
+    per strict window, keyed "window_<W>"."""
+    out = {"stuck": ev["stuck"], "variance": ev["variance"]}
+    for w in preset.strict_windows_s:
+        out[f"window_{w}"] = _window_hits(F, T, w, preset.strict_sustain_s,
+                                          preset.strict_thresholds[w])
     return out
 
 
@@ -187,13 +211,21 @@ class Label:
     plant_dead_t: float | None = None
     first_alarm_t: float | None = None
     t_end: float = 0.0
+    #: strict stratum {observable, t_det, rule, instrument, per_rule}; None (and
+    #: absent from to_dict) for presets without one, so P01 label files are unchanged
+    strict: dict | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d["strict"] is None:
+            del d["strict"]
+        return d
 
 
 def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult, *, preset: Preset) -> Label:
-    ev = evidence(fa.values, tw.values, preset=preset)
+    n = min(len(fa.values), len(tw.values))
+    F, T = fa.values[:n], tw.values[:n]
+    ev = evidence(F, T, preset=preset)
     per_rule = {r: {COLUMNS[i]: t for i, t in enumerate(ev[r]) if t is not None}
                 for r in rules(preset)}
     cands = [(t, r, inst) for r in rules(preset) for inst, t in per_rule[r].items()]
@@ -206,6 +238,15 @@ def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult, *, preset: Preset
     new_acts = [e["t"] for e in fa.events if e["kind"] == "alarm"
                 and e["value"] == "active" and (e["t"], e["id"]) not in twin_acts]
     f = item.fault
+    strict = None
+    if preset.strict_windows_s is not None:
+        sev = strict_evidence(F, T, ev, preset)
+        spr = {r: {COLUMNS[i]: t for i, t in enumerate(v) if t is not None}
+               for r, v in sev.items()}
+        sc = [(t, r, inst) for r, d in spr.items() for inst, t in d.items()]
+        st, sr, si = min(sc) if sc else (None, None, None)
+        strict = {"observable": None if f is None else st is not None, "t_det": st,
+                  "rule": sr, "instrument": si, "per_rule": spr}
     return Label(
         item_id=item.item_id, attempt=item.attempt, fault_present=f is not None,
         t_inj=None if f is None else f.t_inj,
@@ -216,4 +257,4 @@ def label_runs(item: ItemRecord, fa: RunResult, tw: RunResult, *, preset: Preset
         first_out=new_out,
         plant_dead_t=fa.summary["t_end"] if fa.summary["plant_dead"] else None,
         first_alarm_t=min(new_acts) if new_acts else None,
-        t_end=fa.summary["t_end"])
+        t_end=fa.summary["t_end"], strict=strict)

@@ -78,3 +78,51 @@ def test_sustain_needs_s_consecutive_window_ends():
         assert (ev[J] is not None) == fires
         if fires:
             assert ev[J] == 1000 + W - 1
+
+
+# ------------------------------------------------------------- strict stratum
+
+def _run(values: np.ndarray, variant: str):
+    from hotwell_bench.run import RunResult
+    n = len(values)
+    return RunResult("dev-0000", variant, np.arange(n), values, [], [],
+                     {"first_out": [], "plant_dead": False, "t_end": float(n - 1)}, [])
+
+
+def _fault_item():
+    from hotwell_bench.items import sample_item
+    return next(it for i in range(50) if (it := sample_item(1, "dev", i, preset=P01)).fault)
+
+
+STRICT = {w: {c: 3.0 * float(L.SCALE[i]) for i, c in enumerate(COLUMNS)} for w in (10, 600)}
+PS = dataclasses.replace(PW, name="test-strict", strict_windows_s=(10, 600), strict_sustain_s=S,
+                         strict_thresholds=STRICT)
+
+
+def test_p01_label_has_no_strict_key():
+    T = _noise()
+    F = T.copy()
+    F[2000:, J] += 2.0 * float(L.SCALE[J])
+    lab = L.label_runs(_fault_item(), _run(F, "faulted"), _run(T, "twin"), preset=P01)
+    assert "strict" not in lab.to_dict() and lab.observable
+
+
+def test_strict_stratum_ignores_the_per_sample_level_rule():
+    """A 2 D_i step: the lenient rules see it at once (level rule); the strict stratum,
+    whose windows need 3 D_i here, does not. A 4 D_i step is seen by both; the strict
+    stratum reports its 10-s window first: mean > 3 D_i after floor(3/4·10) + 1 = 8
+    samples, so the window ending at t0 + 7 is the first, and it is reported there."""
+    T = _noise()
+    it = _fault_item()
+    for k, strict_obs in ((2.0, False), (4.0, True)):
+        F = T.copy()
+        F[2000:, J] += k * float(L.SCALE[J])
+        lab = L.label_runs(it, _run(F, "faulted"), _run(T, "twin"), preset=PS)
+        st = lab.to_dict()["strict"]
+        print(f"\nstep {k} D_i: lenient t_det {lab.t_det} ({lab.rule}); strict {st['t_det']} "
+              f"({st['rule']}, {st['instrument']})")
+        assert lab.observable and lab.t_det == 2000 and lab.rule == "level"
+        assert st["observable"] is strict_obs
+        if strict_obs:
+            assert st["rule"] == "window_10" and st["t_det"] == 2007
+            assert "level" not in st["per_rule"] and "window" not in st["per_rule"]

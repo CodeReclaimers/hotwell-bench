@@ -125,6 +125,13 @@ class Preset:
     window_s: int | None = None
     window_sustain_s: int | None = None
     window_thresholds: Mapping[str, float] | None = None
+    #: strict per-instrument stratum (Alan, 2026-11-21): stuck + variance + windowed
+    #: rules at every W in strict_windows_s with θ_{W,i} = strict_thresholds[W][i],
+    #: WITHOUT the per-sample level rule. Recorded on each label (Label.strict);
+    #: never decides observability. All three None disables it.
+    strict_windows_s: tuple[int, ...] | None = None
+    strict_sustain_s: int | None = None
+    strict_thresholds: Mapping[int, Mapping[str, float]] | None = None
 
 
 #: Step detectability thresholds, AB + 3E column of hotwell
@@ -191,3 +198,6 @@ for _p in PRESETS.values():
     assert _p.sensor_kinds and set(_p.sensor_kinds) <= set(SENSOR_KINDS), _p.name
     _w = (_p.window_s, _p.window_sustain_s, _p.window_thresholds)
     assert all(x is None for x in _w) or all(x is not None for x in _w), _p.name
+    _s = (_p.strict_windows_s, _p.strict_sustain_s, _p.strict_thresholds)
+    assert all(x is None for x in _s) or all(x is not None for x in _s), _p.name
+    assert _p.strict_thresholds is None or set(_p.strict_thresholds) == set(_p.strict_windows_s)
