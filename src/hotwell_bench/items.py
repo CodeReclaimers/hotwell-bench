@@ -377,7 +377,7 @@ def _place_decoy(kind: str, u: np.ndarray, profile: DayProfile, operator: Operat
         return int(lo + min(int(x * (hi - lo + 1)), hi - lo))
 
     if kind == "load_excursion":
-        mw = round(unif(u[0], *dp.excursion_mw), 1)
+        mw = round(float(unif(u[0], *dp.excursion_mw)), 1)
         ramp = float(round(unif(u[1], *dp.excursion_ramp_s)))
         hold = float(round(unif(u[2], *dp.excursion_hold_s)))
         span = 2 * ramp + hold
