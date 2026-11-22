@@ -123,9 +123,9 @@ SENSOR_BIAS_THRESHOLD = MappingProxyType({
         '33 not detected)',
     ),
     'cp2_current': (
-        0.1875,
-        'both signs: + swept, P02 rules (0.132583 not detected); - swept, P02 rules (0.13'
-        '2583 not detected)',
+        0.5,
+        'floored at 1 LSB (0.5; swept 0.1875); both signs: + swept, P02 rules (0.132583 n'
+        'ot detected); - swept, P02 rules (0.132583 not detected)',
     ),
     'fp1_current': (
         4.242640687119286,
@@ -133,9 +133,9 @@ SENSOR_BIAS_THRESHOLD = MappingProxyType({
         'ted)',
     ),
     'fp2_current': (
-        0.375,
-        'both signs: + swept, P02 rules (0.265165 not detected); - swept, P02 rules (0.26'
-        '5165 not detected)',
+        1.0,
+        'floored at 1 LSB (1; swept 0.375); both signs: + swept, P02 rules (0.265165 not '
+        'detected); - swept, P02 rules (0.265165 not detected)',
     ),
     'fw_valve_pos': (
         0.01,
@@ -168,14 +168,14 @@ SENSOR_BIAS_THRESHOLD = MappingProxyType({
         '353553 not detected)',
     ),
     'makeup_flow': (
-        0.01767766952966369,
-        'both signs: + swept, P02 rules (0.0125 not detected); - swept, P02 rules (0.0125'
-        ' not detected)',
+        0.1,
+        'floored at 1 LSB (0.1; swept 0.0176777); both signs: + swept, P02 rules (0.0125 '
+        'not detected); - swept, P02 rules (0.0125 not detected)',
     ),
     'makeup_valve_pos': (
-        0.000625,
-        'both signs: + swept, P02 rules (0.000441942 not detected); - swept, P02 rules (0'
-        '.000441942 not detected)',
+        0.005,
+        'floored at 1 LSB (0.005; swept 0.000625); both signs: + swept, P02 rules (0.0004'
+        '41942 not detected); - swept, P02 rules (0.000441942 not detected)',
     ),
     'cp1_npsh_margin': (
         0.05,

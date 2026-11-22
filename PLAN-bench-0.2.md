@@ -339,3 +339,11 @@ Answered by Alan, 2026-11-19:
 | B2-Q7 | Null fraction | Raised to 25–30%; this plan fixes `P_NULL` = 0.30 (§3.2). |
 | B2-Q8 | Windowed rule | Empirical seed-pair threshold; W = 600 s, S = 60 s; α for a ≤ 1% per-day false-positive rate (§2.1). |
 | B2-Q9 | The §0 target names the strongest model, but calibration runs only the probe models: how is the target checked? | One strongest-model dev run in the last calibration round, outside the probe cap (§7). Rejected: restating the target as a probe-model band; checking only after freeze, when nothing can be tuned. |
+
+Answered by Alan, 2026-11-22, after the C2 sweep (`scripts/window_sweep.py`, progress-20261122.md):
+
+| ID | Question | Decision |
+|---|---|---|
+| B2-Q10 | Idle, clipped-at-zero instruments (standby pump currents, makeup flow and valve) have swept bias thresholds below 1 LSB, caught only by the variance rule. | Floor every sensor-bias threshold at 1 LSB. Rejected: a labeller change; keeping D_i as the bias scale everywhere. |
+| B2-Q11 | A frequency bias is never detected (the control loop cancels the reading's bias). | Do not sample frequency for sensor bias or drift (wired in C3). |
+| B2-Q12 | The 1 h sweep horizon binds on tube_leak. | Keep 1 h, the 0.1 definition; the table errs toward larger faults there. Rejected: a longer tube_leak-only sweep. |

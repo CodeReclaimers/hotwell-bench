@@ -14,7 +14,11 @@ Rows:
   - The "assumed: X" rows take X's new value, as in 0.1.
 - sensor bias: every instrument, both signs, bias = D_i × 2^(−k/2), k = −2 … 10.
   - D_i = max(3σ_i, 2 LSB_i), the 0.1 sensor scale (items.detection_scale).
-  - The instrument's threshold is the larger of the two signs' thresholds.
+  - The instrument's threshold is the larger of the two signs' thresholds, floored at
+    1 LSB (Alan, 2026-11-22): below 1 LSB only the variance rule fires, on instruments
+    that sit at a clipped zero (standby pump currents, makeup flow and valve).
+  - An instrument with no threshold (frequency: the control loop cancels the reading's
+    bias) is not to be sampled for bias or drift (Alan, 2026-11-22; wired in C3).
 - sensor noise_increase: every instrument, factor in NOISE_FACTORS.
 - drift takes the bias threshold of its instrument ("assumed: bias"), because a
   drift ends at its maximum bias. stuck has no magnitude.
@@ -22,6 +26,10 @@ Rows:
 Threshold of a row: the smallest grid value g such that g and every larger grid value
 are detected. Detected grid values below the threshold are reported as non-monotone.
 A row whose largest grid value is not detected gets no threshold.
+
+Horizon: 1 h after a 300 s onset, the 0.1 definition (Alan, 2026-11-22). It binds on
+tube_leak, whose threshold point is detected only at 2964 s, so the table errs toward
+larger faults there.
 
 Output:
 - the raw results as JSON (default out/window_sweep/results.json);
@@ -39,6 +47,8 @@ import json
 import sys
 import time
 from pathlib import Path
+
+from hotwell.sensors import OBSERVATION_SPEC
 
 from hotwell_bench import window_thresholds as WT
 from hotwell_bench.items import SCHEMA, DayProfile, Fault, ItemRecord, OperatorPlan, detection_scale
@@ -59,6 +69,7 @@ NO_OPERATOR = OperatorPlan(86400, None, None, 5.0, 0.0)
 FACTOR = {"pump_degrade": "head_factor", "valve_degrade": "cv_factor",
           "firing_degrade": "eta_factor"}
 INDEX0 = 7000
+LSB = {x.name: x.resolution for x in OBSERVATION_SPEC}
 
 
 def mult(k: int) -> float:
@@ -215,6 +226,11 @@ def main() -> int:
         b = None if None in thrs else max(thrs)
         bsrc = "both signs: " + "; ".join(
             f"{s} {_src(p[1], p[2])}" for s, p in zip("+-", per_sign, strict=True))
+        if b is not None and b < LSB[c]:
+            # Alan, 2026-11-22: sub-LSB biases on idle, clipped instruments are caught only
+            # by the variance rule through the quantized distribution; floor at 1 LSB.
+            bsrc = f"floored at 1 LSB ({LSB[c]:g}; swept {b:.6g}); " + bsrc
+            b = LSB[c]
         bias[c] = (b, bsrc)
         nthr, nmiss, nnm = threshold([(r["value"], r["observable"]) for r in nt[c]])
         noise[c] = (nthr, _src(nmiss, nnm))
