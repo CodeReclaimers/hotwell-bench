@@ -10,6 +10,7 @@ Baselines graded against the keys:
   keys), onset 12:00:00;
 - shuffled keys: oracle answers graded against keys permuted by a fixed seed
   (G-B5: near chance).
+On 0.2 keys, the oracle's mean onset score on fault items must also be 1.
 Exit status 1 if a G-B5 check fails.
 """
 from __future__ import annotations
@@ -63,6 +64,10 @@ def main() -> int:
     ok &= full["oracle"] == 1.0
     ok &= abs(full["always-none"] - n_null / len(ids)) < 1e-12
     ok &= full["shuffled"] < 0.5
+    if res["oracle"].get("bench_version") == "0.2":     # grader 0.2 (PLAN-bench-0.2.md §6)
+        osc = res["oracle"]["fault_items"]["onset_score"]
+        print(f"G-B5 (0.2): oracle onset score {osc:.4f} (want 1)", flush=True)
+        ok &= osc == 1.0
     print("G-B5 PASS" if ok else "G-B5 FAIL", flush=True)
     return 0 if ok else 1
 

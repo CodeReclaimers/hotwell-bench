@@ -17,6 +17,19 @@ An answer that fails validation (not an object, missing or mistyped field, categ
 outside the closed list, unparseable onset, confidence outside [0, 1]) scores 0 on
 every criterion and is counted as invalid. It is excluded from the Brier mean. A
 missing answer is invalid.
+
+Grader 0.2 (PLAN-bench-0.2.md §6) applies to keys of a 0.2 split (keys that carry
+`decoys`; `key_version`). It adds fields and changes none of the above, so 0.1 keys
+grade exactly as before (G-B5v). Additions:
+- per item, fault items: `onset_score` = exp(−|onset − t_inj| / 1800 s), 0 when the
+  onset is missing or the answer invalid; null items have none. The 0.1 per-item
+  `onset_minus_tdet_s` (onset relative to t_det) is the detection delay;
+- summary: the mean onset score per row, and the median and quartiles of
+  onset − t_det over fault items that give an onset;
+- strata: `decoys` (null / fault × decoy / no decoy), `decoy_kind` (null / fault × each
+  kind on the day; a day with two kinds counts in both rows), `ratio_w` (finer
+  buckets of magnitude / windowed threshold) and `strict` (whether the fault shows on
+  a single instrument).
 """
 from __future__ import annotations
 
@@ -31,6 +44,21 @@ from hotwell_bench.taxonomy import CATEGORIES, FAULT_CATEGORIES, NULL_CATEGORY, 
 _ONSET = re.compile(r"^\s*(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?\s*$")
 _NULLISH = {None, "", "-", "—", "null", "none"}
 CRITERIA = ("detection", "category", "component", "onset", "full")
+#: onset score scale [s] (PLAN-bench-0.2.md §6)
+ONSET_SCORE_S = 1800.0
+VERSIONS = ("0.1", "0.2")
+
+
+def key_version(key: dict) -> str:
+    """The bench version a key was packaged for: 0.2 keys carry `decoys` (package.key_record)."""
+    return "0.2" if "decoys" in key else "0.1"
+
+
+def split_version(keys: dict[str, dict]) -> str:
+    vs = {key_version(k) for k in keys.values()}
+    if len(vs) > 1:
+        raise ValueError(f"keys mix bench versions {sorted(vs)}")
+    return vs.pop() if vs else "0.1"
 
 
 def onset_seconds(s: str) -> int:
@@ -101,9 +129,12 @@ def grade_item(key: dict, ans) -> dict:
     a, err = validate(ans)
     out = {"item_id": key["item_id"], "fault_present": key["fault_present"], "valid": a is not None,
            "error": err}
+    v02 = key_version(key) == "0.2"
     if a is None:
         out.update({c: False for c in CRITERIA})
         out["brier"] = None
+        if v02:
+            out["onset_score"] = 0.0 if key["fault_present"] else None
         return out
     det = a["fault_present"] == key["fault_present"]
     if not key["fault_present"]:
@@ -124,6 +155,10 @@ def grade_item(key: dict, ans) -> dict:
     out.update({"detection": det, "category": cat, "component": comp, "onset": onset,
                 "full": full, "confidence": a["confidence"],
                 "brier": (a["confidence"] - float(full)) ** 2})
+    if v02:
+        out["onset_score"] = (None if not key["fault_present"]
+                              else 0.0 if a["onset_s"] is None
+                              else math.exp(-abs(a["onset_s"] - key["t_inj"]) / ONSET_SCORE_S))
     return out
 
 
@@ -138,6 +173,30 @@ def _ratio_bucket(r) -> str:
     return "<1" if r < 1 else "1-2" if r < 2 else ">=2"
 
 
+def _ratio_bucket_w(r) -> str:
+    """0.2 buckets of magnitude / windowed threshold (MAG_RANGE is 0.7–3)."""
+    if r is None:
+        return "n/a"
+    for hi, name in ((1, "<1"), (1.5, "1-1.5"), (2, "1.5-2"), (3, "2-3")):
+        if r < hi:
+            return name
+    return ">=3"
+
+
+def strata_v02(key: dict) -> dict[str, list[str]]:
+    """The 0.2 strata of a key, each a list of values (`decoy_kind` can have two)."""
+    side = "fault" if key["fault_present"] else "null"
+    out = {"decoys": [f"{side}, {'decoy' if key['decoys'] else 'no decoy'}"],
+           "decoy_kind": [f"{side}, {k}" for k in sorted(set(key["decoys"]))]}
+    if key["fault_present"]:
+        s = key["strata"]
+        out["ratio_w"] = [_ratio_bucket_w(s["ratio"])]
+        out["strict"] = ["strict observable" if s["strict_observable"] else "lenient only"]
+    else:
+        out["ratio_w"] = out["strict"] = ["null"]
+    return out
+
+
 def strata(key: dict) -> dict[str, str]:
     if not key["fault_present"]:
         return {"category": NULL_CATEGORY, "ratio": "null", "shape": "null", "easy": "null",
@@ -149,7 +208,17 @@ def strata(key: dict) -> dict[str, str]:
             "sensor_kind": s.get("sensor_kind") or "n/a"}
 
 
+def _quantiles(xs: list) -> dict | None:
+    if not xs:
+        return None
+    q = sorted(xs)
+    return {"n": len(q), "q25": q[len(q) // 4], "median": q[len(q) // 2],
+            "q75": q[3 * len(q) // 4]}
+
+
 def summarize(keys: dict[str, dict], graded: list[dict]) -> dict:
+    v02 = split_version(keys) == "0.2"
+
     def agg(rows: list[dict]) -> dict:
         n = len(rows)
         d = {"n": n}
@@ -159,6 +228,9 @@ def summarize(keys: dict[str, dict], graded: list[dict]) -> dict:
         br = [r["brier"] for r in rows if r["brier"] is not None]
         d["brier"] = sum(br) / len(br) if br else None
         d["invalid"] = sum(not r["valid"] for r in rows)
+        if v02:
+            sc = [r["onset_score"] for r in rows if r["onset_score"] is not None]
+            d["onset_score"] = sum(sc) / len(sc) if sc else None
         return d
 
     out = {"overall": agg(graded),
@@ -168,10 +240,18 @@ def summarize(keys: dict[str, dict], graded: list[dict]) -> dict:
     for g in graded:
         for dim, val in strata(keys[g["item_id"]]).items():
             by[dim][val].append(g)
+        if v02:
+            for dim, vals in strata_v02(keys[g["item_id"]]).items():
+                for val in vals:
+                    by[dim][val].append(g)
     out["strata"] = {dim: {v: agg(rows) for v, rows in sorted(vals.items())}
                      for dim, vals in by.items()}
     errs = sorted(abs(g["onset_err_s"]) for g in graded if "onset_err_s" in g)
     out["onset_abs_err_s_median"] = errs[len(errs) // 2] if errs else None
+    if v02:
+        out["bench_version"] = "0.2"
+        out["onset_minus_tdet_s"] = _quantiles([g["onset_minus_tdet_s"] for g in graded
+                                                if "onset_minus_tdet_s" in g])
     return out
 
 
@@ -182,12 +262,15 @@ def grade(keys: dict[str, dict], answers: dict[str, object]) -> tuple[list[dict]
 
 
 def report(summary: dict) -> str:
+    v02 = summary.get("bench_version") == "0.2"
+
     def row(name, d):
         f = lambda x: "  -  " if x is None else f"{x:5.3f}"  # noqa: E731
         return (f"{name:34s} {d['n']:4d} " + " ".join(f(d[c]) for c in CRITERIA)
-                + f" {f(d['brier'])} {d['invalid']:4d}")
+                + f" {f(d['brier'])} {d['invalid']:4d}"
+                + (f" {f(d['onset_score'])}" if v02 else ""))
     lines = [f"{'':34s} {'n':>4s} " + " ".join(f"{c[:5]:>5s}" for c in CRITERIA)
-             + f" {'brier':>5s} {'inval':>4s}"]
+             + f" {'brier':>5s} {'inval':>4s}" + (" oscor" if v02 else "")]
     for k in ("overall", "fault_items", "null_items"):
         lines.append(row(k, summary[k]))
     for dim, vals in summary["strata"].items():
@@ -195,6 +278,10 @@ def report(summary: dict) -> str:
         for v, d in vals.items():
             lines.append(row(f"  {v}", d))
     lines.append(f"median |onset - t_inj| [s]: {summary['onset_abs_err_s_median']}")
+    if v02:
+        q = summary["onset_minus_tdet_s"]
+        lines.append("onset - t_det [s]: " + ("no onsets" if q is None else
+                     f"n {q['n']}, q25 {q['q25']}, median {q['median']}, q75 {q['q75']}"))
     return "\n".join(lines)
 
 

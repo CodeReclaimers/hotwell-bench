@@ -37,6 +37,8 @@ repository.
 | Grade | `scripts/grade.py --keys DIR/<split>/keys --answers ANS [--out graded.json]` | report table; per-item JSON |
 | Baselines / G-B5 | `scripts/baselines.py --keys DIR/<split>/keys` | oracle, always-none, prior, shuffled-keys |
 | CUSUM baseline | `scripts/cusum_baseline.py --train DIR/dev --eval DIR/<split> --out ANS` | non-LLM change detector (plan §6): one answer per item, graded with `grade.py` |
+| Compare runs | `scripts/compare_runs.py --keys DIR/<split>/keys --a ANS... [--b ANS...]` | run-to-run flips per configuration; paired bootstrap of A − B over items |
+| Regrade check / G-B5v | `scripts/regrade_check.py --keys DIR/<split>/keys --answers ANS... [--rev v0.1.0]` | whether answers grade byte-identically under the current grader and a past revision's |
 
 **A packaged split:**
 ```
@@ -75,6 +77,19 @@ answer scores 0 and is counted as invalid.
 - Brier score on `confidence` against full;
 - each score stratified by category, magnitude/threshold, step vs ramp, and easy
   (the fault tripped the plant).
+
+Grader 0.2 applies to 0.2 splits (keys carrying `decoys`) and only adds to the above; 0.1
+keys grade byte-identically to `v0.1.0`:
+- an onset score exp(−|onset − t_inj| / 30 min) on fault items (0 without an onset),
+  next to the window rule, and the quartiles of onset − t_det (the detection delay);
+- strata by decoy day (null / fault × decoy / none, and by decoy kind), by finer
+  magnitude / windowed-threshold buckets, and by whether the fault shows on a single
+  instrument.
+
+**Protocol for model runs (0.2).** Run each configuration (model and settings) at least
+twice on the same split. Report tokens and cost next to the scores. Report
+run-to-run noise, i.e. the items that flip between runs, and compare
+configurations with the paired bootstrap over items (`scripts/compare_runs.py`).
 
 **CUSUM baseline** (`src/hotwell_bench/cusum.py`): per-feature CUSUM on load-normalized
 1-minute residuals, trained on dev (fault-free statistics from null days and the
