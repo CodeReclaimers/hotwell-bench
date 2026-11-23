@@ -55,7 +55,8 @@ def test_p02_sampling_matches_the_preset():
           f"ratio range {min(ratios):.3f}..{max(ratios):.3f}, frequency kinds {sorted(freq)}")
     assert abs(null - 0.30) < 0.02
     assert abs(ramps - 0.70) < 0.03
-    assert 0.7 - 1e-9 <= min(ratios) and max(ratios) <= 3.0 + 1e-9
+    lo, hi = P02.mag_range
+    assert lo - 1e-9 <= min(ratios) and max(ratios) <= hi + 1e-9
     assert freq and freq <= {"stuck", "noise_increase"}
     for f in thr:
         assert f.threshold == THRESHOLDS_V020[(f.mechanism, f.target)][0]
@@ -89,7 +90,7 @@ def test_p02_decoys_are_independent_of_the_fault_and_placed_as_specified():
     print(f"\ndecoys: overall {sum(has) / len(has):.3f}, fault days "
           f"{sum(on_fault) / len(on_fault):.3f}, null days {sum(on_null) / len(on_null):.3f}, "
           f"two of them {sum(two) / len(two):.3f}, kinds {kinds}")
-    assert abs(sum(has) / len(has) - 1 / 3) < 0.02
+    assert abs(sum(has) / len(has) - dp.p_decoy) < 0.02
     assert abs(sum(on_fault) / len(on_fault) - sum(on_null) / len(on_null)) < 0.04
     assert abs(sum(two) / len(two) - 0.5) < 0.04
     for it in items:

@@ -174,7 +174,7 @@ def _ratio_bucket(r) -> str:
 
 
 def _ratio_bucket_w(r) -> str:
-    """0.2 buckets of magnitude / windowed threshold (MAG_RANGE is 0.7–3)."""
+    """0.2 buckets of magnitude / windowed threshold (MAG_RANGE: presets.P02)."""
     if r is None:
         return "n/a"
     for hi, name in ((1, "<1"), (1.5, "1-1.5"), (2, "1.5-2"), (3, "2-3")):
